@@ -1,7 +1,7 @@
 import { config as loadEnv } from 'dotenv';
 loadEnv({ path: '.env.local' });
 import CDP from 'chrome-remote-interface';
-import coreLib from './core/index.js';
+import wolfjs from './wolf.js/index.js';
 import io from 'socket.io-client';
 import fs from 'fs';
 import path from 'path';
