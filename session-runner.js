@@ -1,4 +1,4 @@
-```js
+
 import wolfjs from "./wolf.js/index.js";
 import io from "socket.io-client";
 import fs from "fs";
