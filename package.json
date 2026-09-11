@@ -4,8 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node src/index.js",
-    "login": "node src/login.js"
+    "start": "node session-runner.js"
   },
   "dependencies": {
     "chrome-remote-interface": "^0.34.0",
