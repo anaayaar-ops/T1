@@ -1,41 +1,40 @@
-name: XO Bot Runner
+```yaml
+name: WOLF Bot
 
 on:
-  push:
-    branches: [ main ]
-  schedule:
-    # cron مش بيدعم "كل 4 ساعات ونص" في سطر واحد (لازم يكون رقم صحيح)
-    # فقسمناها لسطرين: الساعة بالظبط (00:00, 09:00, 18:00)
-    # ونص الساعة (04:30, 13:30, 22:30) — النتيجة: تشغيل كل 4.5 ساعة تقريبًا
-    - cron: '0 0,9,18 * * *'
-    - cron: '30 4,13,22 * * *'
-  workflow_dispatch: # يتيح لك تشغيله يدوياً من زر Actions
+  workflow_dispatch:
 
-concurrency:
-  group: xobot-group
-  cancel-in-progress: true
+  push:
+    branches:
+      - main
 
 jobs:
-  build:
+  run-wolf:
     runs-on: ubuntu-latest
 
+    timeout-minutes: 310
+
+    env:
+      WOLF_API_TOKEN: ${{ secrets.WOLF_API_TOKEN }}
+      WOLF_APP_CHECK_TOKEN: ${{ secrets.WOLF_APP_CHECK_TOKEN }}
+
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: 20
+          cache: npm
 
       - name: Install dependencies
-        run: |
-          # نستخدم npm install لأنه لا يشترط وجود ملف package-lock.json
-          npm install
+        run: npm ci
 
-      - name: Run Bot
-        env:
-          SVC_API_TOKEN: ${{ secrets.SVC_API_TOKEN }}
-          SVC_APP_CHECK_TOKEN: ${{ secrets.SVC_APP_CHECK_TOKEN }}
-        # يقوم هذا الأمر بتنفيذ ما هو موجود في "scripts": { "start": ... } داخل ملف package.json
-        run: npm start
+      - name: Check Node version
+        run: node --version
+
+      - name: Start WOLF bot
+        run: node check-wolf.js
+```
