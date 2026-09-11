@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "dotenv": "^16.6.1",
-    "wolf.js": "3.0.0-beta5"
+    "socket.io-client": "^4.8.3",
+    "wolf.js": "2.7.10"
   }
 }
