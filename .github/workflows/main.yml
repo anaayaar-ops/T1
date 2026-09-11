@@ -13,7 +13,6 @@ jobs:
 
     runs-on: ubuntu-latest
 
-    # 5 ساعات + هامش بسيط
     timeout-minutes: 310
 
     env:
@@ -38,11 +37,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
 
 
       # ======================================================
-      # معلومات Node
+      # Check Node.js
       # ======================================================
 
       - name: Check Node.js
@@ -52,7 +50,7 @@ jobs:
 
 
       # ======================================================
-      # تثبيت المكتبات
+      # Install dependencies
       # ======================================================
 
       - name: Install dependencies
@@ -60,16 +58,16 @@ jobs:
 
 
       # ======================================================
-      # التأكد من تثبيت wolf.js
+      # Check wolf.js
       # ======================================================
 
       - name: Check wolf.js
         run: |
-          node -e "import('wolf.js').then(m => console.log('wolf.js loaded successfully'))"
+          node -e "import('wolf.js').then(() => console.log('✅ wolf.js loaded successfully')).catch(err => { console.error(err); process.exit(1); })"
 
 
       # ======================================================
-      # تشغيل البوت
+      # Start WOLF bot
       # ======================================================
 
       - name: Start WOLF bot
