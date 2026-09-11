@@ -30,13 +30,33 @@ jobs:
 
 
       # ======================================================
-      # Node.js
+      # Setup Node.js
       # ======================================================
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
+
+
+      # ======================================================
+      # Install FFmpeg
+      # ======================================================
+
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+
+      # ======================================================
+      # Check FFmpeg
+      # ======================================================
+
+      - name: Check FFmpeg
+        run: |
+          which ffmpeg
+          ffmpeg -version
 
 
       # ======================================================
