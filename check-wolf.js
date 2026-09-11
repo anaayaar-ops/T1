@@ -9,10 +9,10 @@ const { WOLF, OnlineState } = wolfjs;
 // الإعدادات
 // ============================================================
 
-const GROUP_ID = 66266;
+const GROUP_ID = 18432094;
 
 const WATCHED_SUBSCRIBER_IDS = [
-    51660277
+    51660277,35543686,80014666,16327118,5507
 ];
 
 const LEAVE_COMMAND = "!كات نزول";
