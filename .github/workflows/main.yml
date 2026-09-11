@@ -3,9 +3,26 @@ name: WOLF Bot
 on:
   workflow_dispatch:
 
+  schedule:
+    - cron: "0 */4 * * *"
+
   push:
     branches:
       - main
+
+
+# ============================================================
+# مهم جدًا:
+# يسمح بتشغيل نسخة واحدة فقط.
+#
+# عندما يبدأ Workflow جديد:
+# GitHub يلغي النسخة السابقة تلقائيًا.
+# ============================================================
+
+concurrency:
+  group: wolf-bot
+  cancel-in-progress: true
+
 
 jobs:
   run-wolf:
@@ -13,7 +30,9 @@ jobs:
 
     runs-on: ubuntu-latest
 
-    timeout-minutes: 310
+    # الحد الأقصى أكبر من 4 ساعات بقليل.
+    # النسخة الجديدة ستلغي القديمة عند موعد الجدولة.
+    timeout-minutes: 300
 
     env:
       WOLF_API_TOKEN: ${{ secrets.WOLF_API_TOKEN }}
@@ -30,7 +49,7 @@ jobs:
 
 
       # ======================================================
-      # Setup Node.js
+      # Node.js
       # ======================================================
 
       - name: Setup Node.js
@@ -60,7 +79,7 @@ jobs:
 
 
       # ======================================================
-      # Check Node.js
+      # Check Node
       # ======================================================
 
       - name: Check Node.js
