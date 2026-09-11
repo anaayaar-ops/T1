@@ -74,4 +74,3 @@ jobs:
 
       - name: Start WOLF bot
         run: npm start
-```
