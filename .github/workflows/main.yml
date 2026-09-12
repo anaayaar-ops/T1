@@ -3,110 +3,29 @@ name: WOLF Bot
 on:
   workflow_dispatch:
 
-  schedule:
-    - cron: "0 */4 * * *"
-
-  push:
-    branches:
-      - main
-
-# ============================================================
-# مهم جدًا:
-# يسمح بتشغيل نسخة واحدة فقط.
-#
-# عندما يبدأ Workflow جديد:
-# GitHub يلغي النسخة السابقة تلقائيًا.
-# ============================================================
-
-concurrency:
-  group: wolf-bot
-  cancel-in-progress: true
-
-
 jobs:
-  run-wolf:
-    name: Run WOLF Bot
-
+  wolf:
     runs-on: ubuntu-latest
 
-    # الحد الأقصى أكبر من 4 ساعات بقليل.
-    # النسخة الجديدة ستلغي القديمة عند موعد الجدولة.
-    timeout-minutes: 300
-
-    env:
-      WOLF_API_TOKEN: ${{ secrets.WOLF_API_TOKEN }}
-      WOLF_APP_CHECK_TOKEN: ${{ secrets.WOLF_APP_CHECK_TOKEN }}
+    timeout-minutes: 360
 
     steps:
-
-      # ======================================================
-      # Checkout
-      # ======================================================
-
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-
-      # ======================================================
-      # Node.js
-      # ======================================================
+      - name: Checkout
+        uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: 20
-
-
-      # ======================================================
-      # Install FFmpeg
-      # ======================================================
-
-      - name: Install FFmpeg
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
-
-
-      # ======================================================
-      # Check FFmpeg
-      # ======================================================
-
-      - name: Check FFmpeg
-        run: |
-          which ffmpeg
-          ffmpeg -version
-
-
-      # ======================================================
-      # Check Node
-      # ======================================================
-
-      - name: Check Node.js
-        run: |
-          node --version
-          npm --version
-
-
-      # ======================================================
-      # Install dependencies
-      # ======================================================
+          node-version: "20"
+          cache: npm
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
-
-      # ======================================================
-      # Check wolf.js
-      # ======================================================
-
-      - name: Check wolf.js
-        run: |
-          node -e "import('wolf.js').then(() => console.log('✅ wolf.js loaded successfully')).catch(err => { console.error(err); process.exit(1); })"
-
-
-      # ======================================================
-      # Start WOLF bot
-      # ======================================================
-
-      - name: Start WOLF bot
-        run: npm start
+      - name: Start WOLF Bot
+        env:
+          WOLF_TOKEN: ${{ secrets.WOLF_TOKEN }}
+          WOLF_APP_CHECK_TOKEN: ${{ secrets.WOLF_APP_CHECK_TOKEN }}
+          WOLF_DEVICE: ${{ secrets.WOLF_DEVICE }}
+          WOLF_IS_APP_CHECK_ENABLED: ${{ secrets.WOLF_IS_APP_CHECK_ENABLED }}
+        run: node check-wolf.js
