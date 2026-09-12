@@ -3,6 +3,10 @@ name: WOLF Bot
 on:
   workflow_dispatch:
 
+# ============================================================
+# منع تشغيل أكثر من WOLF Bot في نفس الوقت
+# عند بدء Workflow جديد يتم إلغاء القديم تلقائياً
+# ============================================================
 concurrency:
   group: wolf-bot
   cancel-in-progress: true
@@ -11,7 +15,7 @@ jobs:
   wolf:
     runs-on: ubuntu-latest
 
-    # أقصى مدة للـ Workflow = 5 ساعات
+    # الحد الأقصى للتشغيل الحالي = 5 ساعات
     timeout-minutes: 300
 
     permissions:
@@ -19,61 +23,135 @@ jobs:
       contents: read
 
     steps:
+
+      # ======================================================
+      # Checkout
+      # ======================================================
       - name: Checkout repository
         uses: actions/checkout@v6
 
+
+      # ======================================================
+      # Node.js
+      # ======================================================
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
           node-version: "20"
 
+
+      # ======================================================
+      # FFmpeg
+      # ======================================================
       - name: Install FFmpeg
         run: |
+          echo "🎵 Installing FFmpeg..."
           sudo apt-get update
           sudo apt-get install -y ffmpeg
+          echo "✅ FFmpeg installed"
           ffmpeg -version
 
-      - name: Install dependencies
-        run: npm install
 
+      # ======================================================
+      # npm dependencies
+      # ======================================================
+      - name: Install dependencies
+        run: |
+          echo "📦 Installing npm dependencies..."
+          npm install
+          echo "✅ Dependencies installed"
+
+
+      # ======================================================
+      # Start WOLF
+      # ======================================================
       - name: Start WOLF Bot
         env:
           WOLF_TOKEN: ${{ secrets.WOLF_TOKEN }}
           WOLF_APP_CHECK_TOKEN: ${{ secrets.WOLF_APP_CHECK_TOKEN }}
           WOLF_DEVICE: ${{ secrets.WOLF_DEVICE }}
           WOLF_IS_APP_CHECK_ENABLED: ${{ secrets.WOLF_IS_APP_CHECK_ENABLED }}
+
+          # GitHub token لتشغيل Workflow جديد
+          GH_TOKEN: ${{ github.token }}
+
         run: |
+
           echo "========================================"
-          echo "🐺 WOLF Bot Started"
-          echo "⏱️ Maximum runtime: 5 hours"
-          echo "🔄 Restart cycle: 4 hours"
+          echo "🐺 WOLF BOT"
+          echo "========================================"
+          echo "🆔 Workflow: ${{ github.run_id }}"
+          echo "📱 Device: $WOLF_DEVICE"
+          echo "🛡️ App Check: $WOLF_IS_APP_CHECK_ENABLED"
+          echo "⏱️ Restart interval: 4 hours"
+          echo "⏱️ Maximum workflow time: 5 hours"
           echo "========================================"
 
+          # --------------------------------------------------
           # تشغيل البوت في الخلفية
+          # --------------------------------------------------
+
           npm start &
           BOT_PID=$!
 
+          echo "🐺 WOLF PID: $BOT_PID"
+          echo "✅ WOLF Bot is running"
+
+          # --------------------------------------------------
           # الانتظار 4 ساعات
+          # 14400 ثانية = 4 ساعات
+          # --------------------------------------------------
+
+          echo "⏳ Waiting 4 hours before restart..."
+
           sleep 14400
 
+          # --------------------------------------------------
+          # التأكد أن البوت ما زال يعمل
+          # --------------------------------------------------
+
+          if kill -0 "$BOT_PID" 2>/dev/null; then
+            echo "🐺 Current WOLF process is still running"
+          else
+            echo "⚠️ WOLF process has already stopped"
+          fi
+
+          # --------------------------------------------------
+          # تشغيل Workflow جديد
+          # --------------------------------------------------
+
           echo "========================================"
-          echo "🔄 4 hours completed"
-          echo "🔄 Starting new WOLF workflow..."
+          echo "🔄 4 HOURS COMPLETED"
+          echo "🔄 Starting NEW WOLF workflow..."
           echo "========================================"
 
-          # تشغيل نسخة جديدة من نفس الـ workflow
-          gh workflow run "${{ github.workflow }}" \
+          gh workflow run wolf.yml \
             --ref "${{ github.ref_name }}"
 
-          echo "✅ New workflow started."
+          echo "✅ New WOLF workflow requested"
 
-          # إنهاء البوت الحالي
-          echo "🛑 Stopping current WOLF bot..."
+          # --------------------------------------------------
+          # إعطاء GitHub لحظة لبدء Workflow الجديد
+          # --------------------------------------------------
+
+          sleep 10
+
+          # --------------------------------------------------
+          # إيقاف WOLF الحالي
+          # --------------------------------------------------
+
+          echo "========================================"
+          echo "🛑 Stopping OLD WOLF process..."
+          echo "========================================"
+
           kill "$BOT_PID" 2>/dev/null || true
+
+          # قتل أي عمليات Node فرعية مرتبطة بالبوت
+          pkill -P "$BOT_PID" 2>/dev/null || true
 
           sleep 5
 
-          echo "🛑 Current workflow finishing..."
+          echo "✅ Old WOLF process stopped"
+          echo "🔄 New workflow should now take over"
+
           exit 0
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
