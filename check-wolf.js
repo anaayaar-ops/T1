@@ -1,6 +1,5 @@
 import wolfjs from "wolf.js";
 import { io } from "socket.io-client";
-import WebSocket from "ws";
 
 const { WOLF, OnlineState } = wolfjs;
 
@@ -28,18 +27,17 @@ const MAX_OCCUPANTS_TO_JOIN = 1;
 // Environment Configuration
 // ============================================================
 
-const WOLF_TOKEN =
-    process.env.WOLF_TOKEN;
+const WOLF_TOKEN = process.env.WOLF_TOKEN;
 
 const WOLF_APP_CHECK_TOKEN =
-    process.env.WOLF_APP_CHECK_TOKEN;
+    process.env.WOLF_APP_CHECK_TOKEN || "";
 
 const WOLF_DEVICE =
     process.env.WOLF_DEVICE || "web";
 
 const WOLF_IS_APP_CHECK_ENABLED =
     String(
-        process.env.WOLF_IS_APP_CHECK_ENABLED
+        process.env.WOLF_IS_APP_CHECK_ENABLED ?? "false"
     ).toLowerCase() === "true";
 
 // ============================================================
@@ -47,10 +45,11 @@ const WOLF_IS_APP_CHECK_ENABLED =
 // ============================================================
 
 if (!WOLF_TOKEN) {
+    console.error("");
+    console.error("❌ WOLF_TOKEN is missing");
     console.error(
-        "❌ Required environment value is missing"
+        "Add WOLF_TOKEN to GitHub Actions Secrets."
     );
-
     process.exit(1);
 }
 
@@ -58,10 +57,11 @@ if (
     WOLF_IS_APP_CHECK_ENABLED &&
     !WOLF_APP_CHECK_TOKEN
 ) {
+    console.error("");
+    console.error("❌ WOLF_APP_CHECK_TOKEN is missing");
     console.error(
-        "❌ Security validation value is missing"
+        "App Check is enabled but no token was supplied."
     );
-
     process.exit(1);
 }
 
@@ -71,13 +71,10 @@ if (
 
 let service = null;
 let socket = null;
-
 let monitorTimer = null;
 
 let autoCheckEnabled = true;
-
 let currentSlotId = null;
-
 let shuttingDown = false;
 
 // ============================================================
@@ -91,9 +88,7 @@ function sleep(ms) {
 }
 
 function isWatchedSubscriber(id) {
-    return WATCHED_SUBSCRIBER_IDS.includes(
-        Number(id)
-    );
+    return WATCHED_SUBSCRIBER_IDS.includes(Number(id));
 }
 
 // ============================================================
@@ -165,9 +160,7 @@ function setupCommandListener() {
                     return;
                 }
 
-                if (
-                    !isWatchedSubscriber(senderId)
-                ) {
+                if (!isWatchedSubscriber(senderId)) {
                     return;
                 }
 
@@ -175,16 +168,12 @@ function setupCommandListener() {
                     `📩 Command received from ${senderId}: ${text}`
                 );
 
-                if (
-                    text === LEAVE_COMMAND
-                ) {
+                if (text === LEAVE_COMMAND) {
                     await leaveStage();
                     return;
                 }
 
-                if (
-                    text === JOIN_COMMAND
-                ) {
+                if (text === JOIN_COMMAND) {
                     await forceJoinStage();
                     return;
                 }
@@ -230,17 +219,9 @@ async function connectService() {
         "🔌 Starting service connection..."
     );
 
-    console.log(
-        `🌐 Host: ${host}`
-    );
-
-    console.log(
-        `🔌 Port: ${port}`
-    );
-
-    console.log(
-        `📱 Device: ${device}`
-    );
+    console.log(`🌐 Host: ${host}`);
+    console.log(`🔌 Port: ${port}`);
+    console.log(`📱 Device: ${device}`);
 
     console.log(
         `🛡️ Security validation: ${
@@ -253,17 +234,14 @@ async function connectService() {
     socket = io(
         `${host}:${port}`,
         {
-            transports: [
-                "websocket"
-            ],
+            transports: ["websocket"],
 
             reconnection: true,
 
             autoConnect: false,
 
             query: {
-                token:
-                    WOLF_TOKEN,
+                token: WOLF_TOKEN,
 
                 device,
 
@@ -287,8 +265,7 @@ async function connectService() {
         }
     );
 
-    service.websocket.socket =
-        socket;
+    service.websocket.socket = socket;
 
     socket.on(
         "connect",
@@ -297,15 +274,12 @@ async function connectService() {
             console.log(
                 "========================================"
             );
-
             console.log(
                 "🔗 Service connection established"
             );
-
             console.log(
                 `🔗 Connection ID: ${socket.id}`
             );
-
             console.log(
                 "========================================"
             );
@@ -317,8 +291,7 @@ async function connectService() {
         error => {
             console.error(
                 "❌ Connection error:",
-                error?.message ||
-                error
+                error?.message || error
             );
         }
     );
@@ -333,31 +306,24 @@ async function connectService() {
     );
 
     socket.onAny(
-        async (
-            eventName,
-            data
-        ) => {
+        async (eventName, data) => {
             try {
                 const handler =
                     service.websocket
-                        .handlers?.[
-                            eventName
-                        ];
+                        .handlers?.[eventName];
 
                 if (!handler) {
                     return;
                 }
 
                 await handler.process(
-                    data?.body ??
-                    data
+                    data?.body ?? data
                 );
 
             } catch (error) {
                 console.error(
                     `❌ Handler error [${eventName}]:`,
-                    error?.message ||
-                    error
+                    error?.message || error
                 );
             }
         }
@@ -379,20 +345,16 @@ async function connectService() {
 async function waitForAuthorization(
     timeout = 60000
 ) {
-    const start =
-        Date.now();
+    const start = Date.now();
 
     console.log(
         "⏳ Waiting for authorization..."
     );
 
     while (
-        Date.now() - start <
-        timeout
+        Date.now() - start < timeout
     ) {
-        if (
-            service.currentSubscriber?.id
-        ) {
+        if (service.currentSubscriber?.id) {
             console.log("");
             console.log(
                 "========================================"
@@ -491,8 +453,7 @@ async function checkStage() {
 
         const occupiedSlots =
             slots.filter(
-                slot =>
-                    !!slot?.occupierId
+                slot => !!slot?.occupierId
             );
 
         console.log(
@@ -512,8 +473,7 @@ async function checkStage() {
 
         const freeSlot =
             slots.find(
-                slot =>
-                    !slot?.occupierId
+                slot => !slot?.occupierId
             );
 
         if (!freeSlot) {
@@ -540,8 +500,7 @@ async function checkStage() {
             `✅ Joined successfully: slot ${currentSlotId}`
         );
 
-        autoCheckEnabled =
-            false;
+        autoCheckEnabled = false;
 
         stopMonitoring();
 
@@ -552,8 +511,7 @@ async function checkStage() {
     } catch (error) {
         console.error(
             "❌ Stage check error:",
-            error?.message ||
-            error
+            error?.message || error
         );
     }
 }
@@ -577,8 +535,7 @@ async function forceJoinStage() {
 
         const freeSlot =
             slots.find(
-                slot =>
-                    !slot?.occupierId
+                slot => !slot?.occupierId
             );
 
         if (!freeSlot) {
@@ -605,8 +562,7 @@ async function forceJoinStage() {
             `✅ Joined successfully: slot ${currentSlotId}`
         );
 
-        autoCheckEnabled =
-            false;
+        autoCheckEnabled = false;
 
         stopMonitoring();
 
@@ -617,8 +573,7 @@ async function forceJoinStage() {
     } catch (error) {
         console.error(
             "❌ Forced join error:",
-            error?.message ||
-            error
+            error?.message || error
         );
     }
 }
@@ -653,16 +608,12 @@ async function leaveStage() {
     } catch (error) {
         console.error(
             "❌ Leave operation error:",
-            error?.message ||
-            error
+            error?.message || error
         );
     }
 
-    currentSlotId =
-        null;
-
-    autoCheckEnabled =
-        false;
+    currentSlotId = null;
+    autoCheckEnabled = false;
 
     stopMonitoring();
 
@@ -706,8 +657,7 @@ function stopMonitoring() {
             monitorTimer
         );
 
-        monitorTimer =
-            null;
+        monitorTimer = null;
     }
 }
 
@@ -715,15 +665,12 @@ function stopMonitoring() {
 // Shutdown
 // ============================================================
 
-async function shutdown(
-    signal
-) {
+async function shutdown(signal) {
     if (shuttingDown) {
         return;
     }
 
-    shuttingDown =
-        true;
+    shuttingDown = true;
 
     console.log("");
     console.log(
@@ -758,8 +705,7 @@ async function shutdown(
     } catch (error) {
         console.error(
             "❌ Failed to release slot:",
-            error?.message ||
-            error
+            error?.message || error
         );
     }
 
@@ -802,6 +748,10 @@ async function main() {
     );
 
     console.log(
+        "🐺 WOLF 2.7.10"
+    );
+
+    console.log(
         "🔐 Loading credentials"
     );
 
@@ -810,7 +760,15 @@ async function main() {
     );
 
     console.log(
-        "🔐 Credentials loaded from environment"
+        `📱 Device: ${WOLF_DEVICE}`
+    );
+
+    console.log(
+        `🛡️ App Check: ${
+            WOLF_IS_APP_CHECK_ENABLED
+                ? "enabled"
+                : "disabled"
+        }`
     );
 
     createService();
