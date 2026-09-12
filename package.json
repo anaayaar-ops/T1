@@ -1,17 +1,14 @@
 {
-  "name": "wolf-stage-bot",
+  "name": "wolf-node-client",
   "version": "1.0.0",
-  "private": true,
   "type": "module",
-  "engines": {
-    "node": ">=18"
-  },
+  "private": true,
   "scripts": {
     "start": "node check-wolf.js"
   },
   "dependencies": {
-    "dotenv": "^17.2.1",
     "socket.io-client": "^4.8.1",
-    "wolf.js": "github:dawalters1/wolf.js"
+    "ws": "^8.18.0",
+    "wolf.js": "file:./wolf.js"
   }
 }
