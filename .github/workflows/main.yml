@@ -3,10 +3,20 @@ name: WOLF Bot
 on:
   workflow_dispatch:
 
+concurrency:
+  group: wolf-bot
+  cancel-in-progress: true
+
 jobs:
   wolf:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+
+    # أقصى مدة للـ Workflow = 5 ساعات
+    timeout-minutes: 300
+
+    permissions:
+      actions: write
+      contents: read
 
     steps:
       - name: Checkout repository
@@ -32,4 +42,38 @@ jobs:
           WOLF_APP_CHECK_TOKEN: ${{ secrets.WOLF_APP_CHECK_TOKEN }}
           WOLF_DEVICE: ${{ secrets.WOLF_DEVICE }}
           WOLF_IS_APP_CHECK_ENABLED: ${{ secrets.WOLF_IS_APP_CHECK_ENABLED }}
-        run: npm start
+        run: |
+          echo "========================================"
+          echo "🐺 WOLF Bot Started"
+          echo "⏱️ Maximum runtime: 5 hours"
+          echo "🔄 Restart cycle: 4 hours"
+          echo "========================================"
+
+          # تشغيل البوت في الخلفية
+          npm start &
+          BOT_PID=$!
+
+          # الانتظار 4 ساعات
+          sleep 14400
+
+          echo "========================================"
+          echo "🔄 4 hours completed"
+          echo "🔄 Starting new WOLF workflow..."
+          echo "========================================"
+
+          # تشغيل نسخة جديدة من نفس الـ workflow
+          gh workflow run "${{ github.workflow }}" \
+            --ref "${{ github.ref_name }}"
+
+          echo "✅ New workflow started."
+
+          # إنهاء البوت الحالي
+          echo "🛑 Stopping current WOLF bot..."
+          kill "$BOT_PID" 2>/dev/null || true
+
+          sleep 5
+
+          echo "🛑 Current workflow finishing..."
+          exit 0
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
