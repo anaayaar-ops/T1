@@ -1,4 +1,3 @@
-```yaml
 name: WOLF Bot
 
 on:
@@ -30,4 +29,3 @@ jobs:
           WOLF_DEVICE: ${{ secrets.WOLF_DEVICE }}
           WOLF_IS_APP_CHECK_ENABLED: ${{ secrets.WOLF_IS_APP_CHECK_ENABLED }}
         run: npm start
-```
