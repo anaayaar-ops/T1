@@ -1,7 +1,7 @@
 {
-  "name": "wolf-node-client",
+  "name": "service-runner",
   "version": "1.0.0",
-  "description": "WOLF Bot using wolf.js 2.7.10",
+  "description": "Runtime service",
   "type": "module",
   "private": true,
   "scripts": {
