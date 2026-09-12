@@ -1,1174 +1,682 @@
-import wolfjs from "wolf.js";
+import wolfjs from "./wolf.js/index.js";
 import { io } from "socket.io-client";
-import fs from "fs";
-import path from "path";
+import WebSocket from "ws";
 
 const { WOLF, OnlineState } = wolfjs;
 
 // ============================================================
-// الإعدادات
+// إعدادات البوت
 // ============================================================
 
 const GROUP_ID = 18432094;
 
 const WATCHED_SUBSCRIBER_IDS = [
-    51660277,35543686,80014666,16327118,5507
+    51660277,
+    35543686,
+    80014666,
+    16327118,
+    5507
 ];
 
 const LEAVE_COMMAND = "!كات نزول";
 const JOIN_COMMAND = "!كات صعود";
 
-const RUN_DURATION_MS = 5 * 60 * 60 * 1000;
 const CHECK_INTERVAL_MS = 10 * 60 * 1000;
-
 const MAX_OCCUPANTS_TO_JOIN = 1;
 
 // ============================================================
-// الحالة
+// GitHub Secrets / Environment
+// ============================================================
+
+const WOLF_TOKEN = process.env.WOLF_TOKEN;
+const WOLF_APP_CHECK_TOKEN = process.env.WOLF_APP_CHECK_TOKEN;
+const WOLF_DEVICE = process.env.WOLF_DEVICE || "web";
+
+const WOLF_IS_APP_CHECK_ENABLED =
+    String(process.env.WOLF_IS_APP_CHECK_ENABLED).toLowerCase() === "true";
+
+if (!WOLF_TOKEN) {
+    console.error("❌ WOLF_TOKEN غير موجود");
+    process.exit(1);
+}
+
+if (WOLF_IS_APP_CHECK_ENABLED && !WOLF_APP_CHECK_TOKEN) {
+    console.error("❌ WOLF_APP_CHECK_TOKEN غير موجود");
+    process.exit(1);
+}
+
+// ============================================================
+// Variables
 // ============================================================
 
 let service = null;
+let socket = null;
 
-let currentSlotId = null;
-
-let checkIntervalHandle = null;
-
+let monitorTimer = null;
 let autoCheckEnabled = true;
-
+let currentSlotId = null;
 let shuttingDown = false;
 
-let monitoringStarted = false;
-
-
 // ============================================================
-// قراءة إصدار wolf.js
+// Helpers
 // ============================================================
 
-function getWolfVersion() {
-    try {
-        const packagePath = require.resolve("wolf.js/package.json");
-
-        const packageJson = JSON.parse(
-            fs.readFileSync(packagePath, "utf8")
-        );
-
-        return packageJson.version;
-    } catch (error) {
-        console.log(
-            "[WOLF] Could not read wolf.js package version:",
-            error.message
-        );
-
-        return undefined;
-    }
+function isWatchedSubscriber(id) {
+    return WATCHED_SUBSCRIBER_IDS.includes(Number(id));
 }
 
-
-// ============================================================
-// قراءة التوكنات
-// ============================================================
-
-function getWolfSession() {
-    const v3APIToken = process.env.WOLF_API_TOKEN;
-    const appCheckToken = process.env.WOLF_APP_CHECK_TOKEN;
-
-    if (!v3APIToken) {
-        throw new Error(
-            "WOLF_API_TOKEN is missing."
-        );
-    }
-
-    if (!appCheckToken) {
-        throw new Error(
-            "WOLF_APP_CHECK_TOKEN is missing."
-        );
-    }
-
-    console.log(
-        "[WOLF] Using tokens from environment variables."
-    );
-
-    return {
-        v3APIToken,
-        appCheckToken
-    };
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// ============================================================
+// Create WOLF
+// ============================================================
+
+function createWolfService() {
+    service = new WOLF();
+
+    service.config.framework.login.token = WOLF_TOKEN;
+
+    service.config.framework.login.onlineState =
+        OnlineState.INVISIBLE;
+
+    if (WOLF_APP_CHECK_TOKEN) {
+        service.config.framework.login.appCheckToken =
+            WOLF_APP_CHECK_TOKEN;
+    }
+
+    return service;
+}
 
 // ============================================================
-// تسجيل الدخول
+// Initialize handlers
 // ============================================================
 
-async function loginWithSession() {
-    const session = getWolfSession();
-
-    console.log(
-        "[WOLF] Initializing wolf.js handlers..."
-    );
-
-    // مهم:
-    // لا نضع appCheckToken داخل login.apiKey.
-    // هذا هو الأسلوب الذي نجح مع النسخة المحلية لديك.
-
-    service.config.framework.login.token =
-        session.v3APIToken;
+async function initializeWolfHandlers() {
+    console.log("⚙️ [WOLF] Initializing wolf.js handlers...");
 
     await service.websocket.init();
 
     console.log(
-        "[WOLF] Loaded",
-        Object.keys(service.websocket.handlers || {}).length,
-        "socket handlers."
+        `⚙️ [WOLF] Loaded ${
+            Object.keys(service.websocket.handlers || {}).length
+        } socket handlers`
     );
+}
 
-    // --------------------------------------------------------
-    // إعدادات الاتصال التي يوفرها wolf.js
-    // --------------------------------------------------------
+// ============================================================
+// Private commands
+// ============================================================
 
-    const connectionConfig =
-        service._frameworkConfig.get("connection");
-
-    if (!connectionConfig) {
-        throw new Error(
-            "wolf.js connection configuration was not found."
-        );
-    }
-
-    const {
-        host,
-        port,
-        query
-    } = connectionConfig;
-
-    const {
-        device,
-        version
-    } = query;
-
-    const loginConfig =
-        service.config.framework.login;
-
-    const onlineState =
-        loginConfig.onlineState;
-
-    const wolfVersion =
-        version || getWolfVersion();
-
-    console.log(
-        "[WOLF] wolf.js version:",
-        wolfVersion || "unknown"
-    );
-
-    console.log(
-        "[WOLF] Creating Socket.IO connection..."
-    );
-
-    // --------------------------------------------------------
-    // Socket.IO
-    // --------------------------------------------------------
-
-    const socket = io(
-        `${host}:${port}`,
-        {
-            transports: ["websocket"],
-
-            reconnection: true,
-
-            autoConnect: false,
-
-            query: {
-                token: session.v3APIToken,
-
-                device,
-
-                state: onlineState,
-
-                version: wolfVersion,
-
-                isAppCheckEnabled: "true",
-
-                appCheckToken: session.appCheckToken
-            }
-        }
-    );
-
-
-    // ========================================================
-    // Engine.IO
-    // ========================================================
-
-    socket.io.engine?.on(
-        "open",
-        () => {
-            console.log(
-                "[DEBUG] Engine.IO open"
+function setupPrivateCommandListener() {
+    service.on("privateMessage", async message => {
+        try {
+            const senderId = Number(
+                message?.sourceSubscriberId ??
+                message?.senderId ??
+                message?.sender?.id ??
+                message?.subscriberId
             );
-        }
-    );
 
+            const text = String(
+                message?.body ??
+                message?.text ??
+                message?.message ??
+                ""
+            ).trim();
 
-    // ========================================================
-    // Socket.IO connection
-    // ========================================================
+            if (!senderId || !text) return;
 
-    socket.on(
-        "connect",
-        () => {
-            console.log(
-                "[DEBUG] Socket.IO connected."
-            );
+            if (!isWatchedSubscriber(senderId)) return;
 
             console.log(
-                "[WOLF] Socket.IO connected."
+                `📩 [BOT] أمر من ${senderId}: ${text}`
             );
-        }
-    );
 
-
-    // ========================================================
-    // Socket.IO errors
-    // ========================================================
-
-    socket.on(
-        "connect_error",
-        (error) => {
-            console.error(
-                "[WOLF] Socket.IO connect_error:",
-                error?.message || error
-            );
-        }
-    );
-
-
-    socket.on(
-        "error",
-        (error) => {
-            console.error(
-                "[WOLF] Socket error:",
-                error
-            );
-        }
-    );
-
-
-    // ========================================================
-    // Disconnect
-    // ========================================================
-
-    socket.on(
-        "disconnect",
-        (reason) => {
-            console.log(
-                "[WOLF] Disconnected:",
-                reason
-            );
-        }
-    );
-
-
-    // ========================================================
-    // تمرير أحداث Socket إلى wolf.js
-    // ========================================================
-
-    socket.onAny(
-        (eventString, data) => {
-
-            const handler =
-                service.websocket.handlers[eventString];
-
-            const body =
-                data?.body ?? data;
-
-            if (!handler) {
-
-                console.log(
-                    `[DEBUG] No wolf.js handler for: ${eventString}`
-                );
-
+            if (text === LEAVE_COMMAND) {
+                await leaveStage();
                 return;
             }
 
-            try {
-
-                return handler.process(body);
-
-            } catch (error) {
-
-                console.error(
-                    `[WOLF] Handler error for ${eventString}:`,
-                    error
-                );
+            if (text === JOIN_COMMAND) {
+                await forceJoinStage();
+                return;
             }
+
+        } catch (error) {
+            console.error(
+                "❌ privateMessage error:",
+                error?.message || error
+            );
         }
+    });
+
+    console.log("📡 [BOT] Private command listener active");
+}
+
+// ============================================================
+// Connect WOLF Socket.IO
+// ============================================================
+
+async function connectWolfSocket() {
+    const connection =
+        service._frameworkConfig?.get?.("connection");
+
+    const host =
+        connection?.host ||
+        "https://v3-rc.palringo.com";
+
+    const port =
+        connection?.port ??
+        443;
+
+    const device =
+        connection?.query?.device ||
+        WOLF_DEVICE ||
+        "web";
+
+    console.log("");
+    console.log("🔌 تشغيل اتصال WOLF API...");
+    console.log(`🐺 wolf.js version: 2.7.10`);
+    console.log(`🌐 WOLF host: ${host}`);
+    console.log(`🔌 WOLF port: ${port}`);
+    console.log(`📱 Device: ${device}`);
+    console.log(
+        `🛡️ App Check: ${WOLF_IS_APP_CHECK_ENABLED ? "enabled" : "disabled"}`
     );
 
+    socket = io(`${host}:${port}`, {
+        transports: ["websocket"],
+        reconnection: true,
+        autoConnect: false,
 
-    // ========================================================
-    // ربط Socket مع wolf.js
-    // ========================================================
+        query: {
+            token: WOLF_TOKEN,
+            device,
+            state:
+                service.config.framework.login.onlineState,
+
+            version:
+                connection?.version || undefined,
+
+            isAppCheckEnabled:
+                WOLF_IS_APP_CHECK_ENABLED
+                    ? "true"
+                    : "false",
+
+            appCheckToken:
+                WOLF_IS_APP_CHECK_ENABLED
+                    ? WOLF_APP_CHECK_TOKEN
+                    : undefined
+        }
+    });
 
     service.websocket.socket = socket;
 
-    console.log(
-        "[WOLF] Connecting..."
-    );
+    socket.on("connect", () => {
+        console.log("");
+        console.log("========================================");
+        console.log("🔗 [WOLF] Socket.IO connected");
+        console.log(`🔗 Socket ID: ${socket.id}`);
+        console.log("========================================");
+    });
+
+    socket.on("connect_error", error => {
+        console.error(
+            "❌ [WOLF] Socket connect error:",
+            error?.message || error
+        );
+    });
+
+    socket.on("disconnect", reason => {
+        console.log(
+            `🔌 [WOLF] Socket disconnected: ${reason}`
+        );
+    });
+
+    socket.onAny(async (eventName, data) => {
+        try {
+            const handler =
+                service.websocket.handlers?.[eventName];
+
+            if (!handler) {
+                return;
+            }
+
+            await handler.process(
+                data?.body ?? data
+            );
+
+        } catch (error) {
+            console.error(
+                `❌ Handler error [${eventName}]:`,
+                error?.message || error
+            );
+        }
+    });
+
+    console.log("🔌 [WOLF] Connecting...");
 
     socket.connect();
 
-
-    // ========================================================
-    // انتظار authorization
-    // ========================================================
-
-    console.log(
-        "[WOLF] Waiting for authorization..."
-    );
-
-    const authorizationTimeout = 15000;
-
-    const startedAt = Date.now();
-
-    while (
-        !service.currentSubscriber &&
-        Date.now() - startedAt < authorizationTimeout
-    ) {
-
-        await new Promise(
-            resolve => setTimeout(resolve, 250)
-        );
-
-        console.log(
-            "[DEBUG] socket.connected:",
-            socket.connected
-        );
-
-        console.log(
-            "[DEBUG] currentSubscriber:",
-            service.currentSubscriber
-                ? "YES"
-                : "NO"
-        );
-    }
-
-
-    // ========================================================
-    // تحقق من تسجيل الدخول
-    // ========================================================
-
-    if (!service.currentSubscriber) {
-
-        throw new Error(
-            "Socket connected, but WOLF authorization did not complete."
-        );
-    }
-
-    console.log(
-        "[WOLF] Authorization complete."
-    );
-
-    console.log(
-        "[WOLF] Logged in as:",
-        service.currentSubscriber.nickname ||
-        service.currentSubscriber.username ||
-        service.currentSubscriber.id
-    );
-
-    return socket;
+    await waitForAuthorization();
 }
 
-
 // ============================================================
-// إعداد Events
+// Wait for login
 // ============================================================
 
-function setupEvents() {
+async function waitForAuthorization(timeout = 60000) {
+    const start = Date.now();
 
-    // --------------------------------------------------------
-    // Private Message
-    // --------------------------------------------------------
+    console.log(
+        "⏳ [WOLF] Waiting for authorization..."
+    );
 
-    service.on(
-        "privateMessage",
-        async (message) => {
+    while (Date.now() - start < timeout) {
+        if (service.currentSubscriber?.id) {
+            console.log("");
+            console.log("========================================");
+            console.log("✅ [WOLF] Authorization complete");
+            console.log(
+                `👤 Logged in as: ${
+                    service.currentSubscriber.username ||
+                    service.currentSubscriber.nickname ||
+                    "Unknown"
+                }`
+            );
+            console.log(
+                `🆔 Subscriber ID: ${
+                    service.currentSubscriber.id
+                }`
+            );
+            console.log("========================================");
 
-            try {
-
-                console.log(
-                    "[PRIVATE MESSAGE]",
-                    message
-                );
-
-                const senderId =
-                    Number(
-                        message.sourceSubscriberId
-                    );
-
-                if (
-                    !WATCHED_SUBSCRIBER_IDS.includes(
-                        senderId
-                    )
-                ) {
-                    return;
-                }
-
-                const body =
-                    String(
-                        message.body || ""
-                    ).trim();
-
-
-                // ============================================
-                // أمر النزول
-                // ============================================
-
-                if (
-                    body === LEAVE_COMMAND
-                ) {
-
-                    console.log(
-                        `📩 استلام أمر النزول من ${senderId}`
-                    );
-
-                    await leaveStage();
-
-                    return;
-                }
-
-
-                // ============================================
-                // أمر الصعود
-                // ============================================
-
-                if (
-                    body === JOIN_COMMAND
-                ) {
-
-                    console.log(
-                        `📩 استلام أمر الصعود من ${senderId}`
-                    );
-
-                    await forceJoinStage();
-
-                    return;
-                }
-
-            } catch (error) {
-
-                console.error(
-                    "[WOLF] privateMessage error:",
-                    error
-                );
-            }
+            return;
         }
+
+        await sleep(500);
+    }
+
+    throw new Error(
+        "Timeout waiting for WOLF authorization"
     );
 }
 
+// ============================================================
+// Stage API
+// ============================================================
+
+async function verifyStageAPI() {
+    console.log(
+        `🧪 [${GROUP_ID}] فحص Stage API...`
+    );
+
+    await service.stage.getAudioConfig(GROUP_ID);
+
+    console.log(
+        "✅ Stage API 2.7.10 جاهز"
+    );
+}
 
 // ============================================================
-// فحص الاستيج والصعود
+// Get Stage slots
 // ============================================================
 
-async function checkStageAndJoin() {
+async function getStageSlots() {
+    const slots =
+        await service.stage.slot.list(GROUP_ID);
 
-    if (shuttingDown) {
-        return;
-    }
+    return Array.isArray(slots)
+        ? slots
+        : [];
+}
 
-    if (!service) {
+// ============================================================
+// Auto Join
+// ============================================================
+
+async function checkStage() {
+    if (!autoCheckEnabled) {
         return;
     }
 
     if (currentSlotId) {
-
-        console.log(
-            `🎙️ البوت موجود حاليًا في Slot ${currentSlotId}`
-        );
-
         return;
     }
 
+    console.log(
+        `🎙️ [${GROUP_ID}] جاري فحص Stage...`
+    );
+
     try {
+        const slots = await getStageSlots();
 
         console.log(
-            "🔎 جاري فحص الاستيج..."
+            `📦 [${GROUP_ID}] تم استلام ${slots.length} slots`
         );
 
-
-        // ----------------------------------------------------
-        // Audio Config
-        // ----------------------------------------------------
-
-        try {
-
-            await service.stage.getAudioConfig(
-                GROUP_ID
-            );
-
-        } catch (error) {
-
-            console.log(
-                "[STAGE] getAudioConfig warning:",
-                error?.message || error
-            );
-        }
-
-
-        // ----------------------------------------------------
-        // Slots
-        // ----------------------------------------------------
-
-        const slots =
-            await service.stage.slot.list(
-                GROUP_ID
-            );
-
-
-        if (
-            !Array.isArray(slots)
-        ) {
-
-            throw new Error(
-                "Stage slots response is not an array."
-            );
-        }
-
-
-        // ----------------------------------------------------
-        // الأشخاص الموجودون
-        // ----------------------------------------------------
-
-        const occupants =
+        const occupiedSlots =
             slots.filter(
-                slot => !!slot.occupierId
+                slot => !!slot?.occupierId
             );
 
-
         console.log(
-            "👥 عدد الموجودين على الاستيج:",
-            occupants.length
+            `👥 عدد الموجودين على Stage: ${occupiedSlots.length}`
         );
 
-
-        // ----------------------------------------------------
-        // العدد أكبر من المطلوب
-        // ----------------------------------------------------
-
         if (
-            occupants.length >
+            occupiedSlots.length >
             MAX_OCCUPANTS_TO_JOIN
         ) {
-
             console.log(
-                `⏳ العدد غير مناسب (${occupants.length}) — سيتم إعادة الفحص لاحقًا.`
+                "⏭️ عدد الموجودين أكبر من الحد، لن نصعد."
             );
 
             return;
         }
-
-
-        // ----------------------------------------------------
-        // البحث عن Slot فارغ
-        // ----------------------------------------------------
 
         const freeSlot =
             slots.find(
-                slot => !slot.occupierId
+                slot => !slot?.occupierId
             );
 
-
         if (!freeSlot) {
-
             console.log(
-                "⚠️ لا يوجد Slot فارغ حاليًا."
+                "⚠️ لا يوجد Slot فارغ."
             );
 
             return;
         }
 
-
-        // ----------------------------------------------------
-        // الصعود
-        // ----------------------------------------------------
-
         console.log(
-            `🎙️ جاري الصعود للسلوت ${freeSlot.id}...`
+            `🎙️ جاري الصعود إلى Slot ${freeSlot.id}...`
         );
-
-
-        const response =
-            await service.stage.slot.join(
-                GROUP_ID,
-                freeSlot.id
-            );
-
-
-        console.log(
-            "✅ تم الصعود تلقائيًا للاستيج بنجاح."
-        );
-
-        console.log(
-            "🎙️ Slot ID:",
-            freeSlot.id
-        );
-
-
-        currentSlotId =
-            freeSlot.id;
-
-
-        // ----------------------------------------------------
-        // إيقاف الفحص الدوري
-        // ----------------------------------------------------
-
-        autoCheckEnabled = false;
-
-        if (checkIntervalHandle) {
-
-            clearInterval(
-                checkIntervalHandle
-            );
-
-            checkIntervalHandle = null;
-        }
-
-
-        console.log(
-            "🛑 تم إيقاف الفحص التلقائي نهائيًا: تم الصعود تلقائيًا بنجاح"
-        );
-
-        return response;
-
-    } catch (error) {
-
-        console.error(
-            "❌ خطأ أثناء فحص الاستيج:",
-            error
-        );
-    }
-}
-
-
-// ============================================================
-// صعود إجباري
-// ============================================================
-
-async function forceJoinStage() {
-
-    if (shuttingDown) {
-        return;
-    }
-
-    if (currentSlotId) {
-
-        console.log(
-            `ℹ️ البوت موجود بالفعل على Slot ${currentSlotId}`
-        );
-
-        return;
-    }
-
-    try {
-
-        console.log(
-            "🎙️ محاولة الصعود الإجباري للاستيج..."
-        );
-
-
-        // ----------------------------------------------------
-        // Audio Config
-        // ----------------------------------------------------
-
-        try {
-
-            await service.stage.getAudioConfig(
-                GROUP_ID
-            );
-
-        } catch (error) {
-
-            console.log(
-                "[STAGE] getAudioConfig warning:",
-                error?.message || error
-            );
-        }
-
-
-        // ----------------------------------------------------
-        // Slots
-        // ----------------------------------------------------
-
-        const slots =
-            await service.stage.slot.list(
-                GROUP_ID
-            );
-
-
-        if (
-            !Array.isArray(slots)
-        ) {
-
-            throw new Error(
-                "Stage slots response is not an array."
-            );
-        }
-
-
-        const freeSlot =
-            slots.find(
-                slot => !slot.occupierId
-            );
-
-
-        if (!freeSlot) {
-
-            console.log(
-                "❌ لا يوجد Slot فارغ للصعود."
-            );
-
-            return;
-        }
-
-
-        console.log(
-            `🎙️ جاري الصعود للسلوت ${freeSlot.id}...`
-        );
-
 
         await service.stage.slot.join(
             GROUP_ID,
             freeSlot.id
         );
 
-
-        currentSlotId =
-            freeSlot.id;
-
+        currentSlotId = freeSlot.id;
 
         console.log(
-            "✅ تم الصعود بنجاح."
+            `✅ تم الصعود بنجاح إلى Slot ${currentSlotId}`
         );
-
-        console.log(
-            "🎙️ Slot ID:",
-            currentSlotId
-        );
-
-
-        // ----------------------------------------------------
-        // إيقاف الفحص
-        // ----------------------------------------------------
 
         autoCheckEnabled = false;
 
-        if (checkIntervalHandle) {
+        stopMonitoring();
 
-            clearInterval(
-                checkIntervalHandle
-            );
-
-            checkIntervalHandle = null;
-        }
-
+        console.log(
+            "🛑 تم إيقاف الفحص التلقائي بعد الصعود"
+        );
 
     } catch (error) {
-
         console.error(
-            "❌ فشل الصعود الإجباري:",
-            error
+            "❌ Stage check error:",
+            error?.message || error
         );
     }
 }
 
+// ============================================================
+// Force Join
+// ============================================================
+
+async function forceJoinStage() {
+    console.log(
+        `🎙️ [${GROUP_ID}] صعود إجباري إلى Stage...`
+    );
+
+    try {
+        const slots = await getStageSlots();
+
+        console.log(
+            `📦 تم استلام ${slots.length} slots`
+        );
+
+        const freeSlot =
+            slots.find(
+                slot => !slot?.occupierId
+            );
+
+        if (!freeSlot) {
+            console.log(
+                "❌ لا يوجد Slot فارغ."
+            );
+
+            return;
+        }
+
+        console.log(
+            `🎙️ جاري الصعود الإجباري إلى Slot ${freeSlot.id}...`
+        );
+
+        await service.stage.slot.join(
+            GROUP_ID,
+            freeSlot.id
+        );
+
+        currentSlotId = freeSlot.id;
+
+        console.log(
+            `✅ تم الصعود بنجاح إلى Slot ${currentSlotId}`
+        );
+
+        autoCheckEnabled = false;
+
+        stopMonitoring();
+
+        console.log(
+            "🛑 تم إيقاف المراقبة التلقائية بعد الصعود"
+        );
+
+    } catch (error) {
+        console.error(
+            "❌ Force join error:",
+            error?.message || error
+        );
+    }
+}
 
 // ============================================================
-// النزول من الاستيج
+// Leave Stage
 // ============================================================
 
 async function leaveStage() {
-
-    if (!service) {
-        return;
-    }
-
     if (!currentSlotId) {
-
         console.log(
-            "ℹ️ البوت ليس على الاستيج حاليًا."
+            "ℹ️ البوت ليس على Stage."
         );
 
         return;
     }
 
-    const slotId =
-        currentSlotId;
-
+    console.log(
+        `🛑 جاري النزول من Slot ${currentSlotId}...`
+    );
 
     try {
-
-        console.log(
-            `🛑 جاري النزول من الاستيج، Slot ${slotId}...`
-        );
-
-
         await service.stage.slot.leave(
             GROUP_ID,
-            slotId
-        );
-
-
-        console.log(
-            "✅ تم النزول من الاستيج."
-        );
-
-
-        currentSlotId =
-            null;
-
-
-    } catch (error) {
-
-        console.error(
-            "❌ خطأ أثناء النزول من الاستيج:",
-            error
-        );
-    }
-}
-
-
-// ============================================================
-// بدء المراقبة
-// ============================================================
-
-async function startMonitoringAfterLogin() {
-
-    if (monitoringStarted) {
-        return;
-    }
-
-    monitoringStarted = true;
-
-
-    // --------------------------------------------------------
-    // Invisible / Away
-    // --------------------------------------------------------
-
-    try {
-
-        await service.setOnlineState(
-            OnlineState.INVISIBLE
+            currentSlotId
         );
 
         console.log(
-            "✅ تم ضبط الحالة بنجاح إلى: بعيد (Away)"
+            "✅ تم النزول من Stage"
         );
 
     } catch (error) {
-
         console.error(
-            "⚠️ تعذر ضبط الحالة:",
-            error
+            "❌ Leave Stage error:",
+            error?.message || error
         );
     }
 
+    currentSlotId = null;
 
-    // --------------------------------------------------------
-    // أول فحص مباشرة
-    // --------------------------------------------------------
+    autoCheckEnabled = false;
 
-    await checkStageAndJoin();
+    stopMonitoring();
 
-
-    // --------------------------------------------------------
-    // الفحص الدوري
-    // --------------------------------------------------------
-
-    if (
-        autoCheckEnabled &&
-        !currentSlotId
-    ) {
-
-        console.log(
-            `🔄 سيتم فحص الاستيج كل ${CHECK_INTERVAL_MS / 60000} دقائق.`
-        );
-
-
-        checkIntervalHandle =
-            setInterval(
-                async () => {
-
-                    if (
-                        shuttingDown ||
-                        !autoCheckEnabled
-                    ) {
-                        return;
-                    }
-
-                    await checkStageAndJoin();
-
-                },
-                CHECK_INTERVAL_MS
-            );
-
-    } else {
-
-        console.log(
-            "🛑 الفحص التلقائي متوقف — لا يوجد فحص دوري."
-        );
-    }
-
-
-    // --------------------------------------------------------
-    // مؤقت إيقاف البوت
-    // --------------------------------------------------------
-
-    setTimeout(
-        async () => {
-
-            console.log(
-                "⏰ انتهت مدة تشغيل البوت المحددة."
-            );
-
-            await shutdown(
-                "RUN_DURATION_EXPIRED"
-            );
-
-        },
-        RUN_DURATION_MS
+    console.log(
+        "🛑 المراقبة التلقائية متوقفة بعد أمر النزول"
     );
 }
 
+// ============================================================
+// Monitoring
+// ============================================================
+
+function startMonitoring() {
+    stopMonitoring();
+
+    if (!autoCheckEnabled || currentSlotId) {
+        console.log(
+            "🛑 لا حاجة لتشغيل الفحص الدوري."
+        );
+
+        return;
+    }
+
+    console.log(
+        "🔄 تم تشغيل مراقبة Stage"
+    );
+
+    monitorTimer = setInterval(
+        checkStage,
+        CHECK_INTERVAL_MS
+    );
+}
+
+function stopMonitoring() {
+    if (monitorTimer) {
+        clearInterval(monitorTimer);
+        monitorTimer = null;
+    }
+}
 
 // ============================================================
 // Shutdown
 // ============================================================
 
-async function shutdown(reason) {
-
-    if (shuttingDown) {
-        return;
-    }
+async function shutdown(signal) {
+    if (shuttingDown) return;
 
     shuttingDown = true;
 
+    console.log("");
+    console.log("========================================");
+    console.log(
+        `🛑 إغلاق البوت بسبب ${signal}`
+    );
+    console.log("========================================");
+
+    stopMonitoring();
+
+    try {
+        if (currentSlotId) {
+            console.log(
+                `🛑 جاري النزول من Stage قبل الإغلاق — Slot ${currentSlotId}`
+            );
+
+            await service.stage.slot.leave(
+                GROUP_ID,
+                currentSlotId
+            );
+
+            console.log(
+                "✅ تم النزول من Stage."
+            );
+        }
+    } catch (error) {
+        console.error(
+            "❌ فشل النزول:",
+            error?.message || error
+        );
+    }
+
+    try {
+        socket?.disconnect();
+    } catch {}
 
     console.log(
-        `🛑 جاري إيقاف البوت بسبب: ${reason}`
+        "🔌 تم إغلاق اتصال WOLF."
     );
 
-
-    // --------------------------------------------------------
-    // إيقاف interval
-    // --------------------------------------------------------
-
-    if (checkIntervalHandle) {
-
-        clearInterval(
-            checkIntervalHandle
-        );
-
-        checkIntervalHandle = null;
-    }
-
-
-    // --------------------------------------------------------
-    // النزول من الاستيج
-    // --------------------------------------------------------
-
-    try {
-
-        await leaveStage();
-
-    } catch (error) {
-
-        console.error(
-            "[SHUTDOWN] leaveStage error:",
-            error
-        );
-    }
-
-
-    // --------------------------------------------------------
-    // Socket disconnect
-    // --------------------------------------------------------
-
-    try {
-
-        if (
-            service?.websocket?.socket
-        ) {
-
-            service.websocket.socket.disconnect();
-        }
-
-    } catch (error) {
-
-        console.error(
-            "[SHUTDOWN] socket disconnect error:",
-            error
-        );
-    }
-
-
-    // --------------------------------------------------------
-    // إنهاء العملية
-    // --------------------------------------------------------
-
-    setTimeout(
-        () => {
-            process.exit(0);
-        },
-        1000
+    console.log(
+        "👋 تم إيقاف البوت."
     );
+
+    process.exit(0);
 }
 
-
-// ============================================================
-// إشارات النظام
-// ============================================================
-
-process.on(
-    "SIGINT",
-    async () => {
-        await shutdown("SIGINT");
-    }
-);
-
-process.on(
-    "SIGTERM",
-    async () => {
-        await shutdown("SIGTERM");
-    }
-);
-
-
-// ============================================================
-// أخطاء غير معالجة
-// ============================================================
-
-process.on(
-    "unhandledRejection",
-    (error) => {
-
-        console.error(
-            "❌ Unhandled Promise Rejection:",
-            error
-        );
-    }
-);
-
-process.on(
-    "uncaughtException",
-    (error) => {
-
-        console.error(
-            "❌ Uncaught Exception:",
-            error
-        );
-    }
-);
-
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));
 
 // ============================================================
 // Main
 // ============================================================
 
 async function main() {
+    console.log("🐺 WOLF Bot started");
+    console.log("========================================");
+    console.log("🔐 WOLF Token Login");
+    console.log("========================================");
 
     console.log(
-        "============================================================"
+        "🔐 تم تحميل WOLF credentials من Environment"
+    );
+
+    createWolfService();
+
+    await initializeWolfHandlers();
+
+    setupPrivateCommandListener();
+
+    await connectWolfSocket();
+
+    await verifyStageAPI();
+
+    console.log(
+        "🟢 تم تسجيل الدخول بنجاح."
     );
 
     console.log(
-        "🐺 WOLF Bot starting..."
+        "👻 تم ضبط الحالة على Invisible."
     );
 
-    console.log(
-        "============================================================"
-    );
+    await checkStage();
 
-
-    // --------------------------------------------------------
-    // تحقق من Secrets
-    // --------------------------------------------------------
-
-    if (!process.env.WOLF_API_TOKEN) {
-
-        throw new Error(
-            "WOLF_API_TOKEN GitHub Secret is missing."
-        );
+    if (!currentSlotId) {
+        startMonitoring();
     }
 
-    if (!process.env.WOLF_APP_CHECK_TOKEN) {
-
-        throw new Error(
-            "WOLF_APP_CHECK_TOKEN GitHub Secret is missing."
-        );
-    }
-
-
-    // --------------------------------------------------------
-    // إنشاء WOLF
-    // --------------------------------------------------------
-
-    service =
-        new WOLF();
-
-
-    // --------------------------------------------------------
-    // Events
-    // --------------------------------------------------------
-
-    setupEvents();
-
-
-    // --------------------------------------------------------
-    // Login
-    // --------------------------------------------------------
-
-    await loginWithSession();
-
-
+    console.log("");
+    console.log("========================================");
+    console.log("✅ [BOT] كل شيء يعمل والبوت مستمر...");
+    console.log(`🏠 GROUP_ID: ${GROUP_ID}`);
     console.log(
-        "✅ تم تسجيل الدخول:",
-        service.currentSubscriber?.nickname ||
-        service.currentSubscriber?.username ||
-        service.currentSubscriber?.id
+        `🎙️ MAX_OCCUPANTS_TO_JOIN: ${MAX_OCCUPANTS_TO_JOIN}`
     );
-
-
-    // --------------------------------------------------------
-    // Monitoring
-    // --------------------------------------------------------
-
-    await startMonitoringAfterLogin();
+    console.log(
+        "⏱️ CHECK_INTERVAL: 10 minutes"
+    );
+    console.log("========================================");
 }
 
+main().catch(async error => {
+    console.error("");
+    console.error("❌ FATAL ERROR");
+    console.error(
+        error?.stack || error?.message || error
+    );
 
-// ============================================================
-// تشغيل
-// ============================================================
+    try {
+        socket?.disconnect();
+    } catch {}
 
-main().catch(
-    async (error) => {
-
-        console.error(
-            "============================================================"
-        );
-
-        console.error(
-            "❌ WOLF BOT FAILED"
-        );
-
-        console.error(
-            error
-        );
-
-        console.error(
-            "============================================================"
-        );
-
-        await shutdown(
-            "STARTUP_ERROR"
-        );
-    }
-);
+    process.exit(1);
+});
