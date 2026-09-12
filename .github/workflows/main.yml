@@ -1,154 +1,84 @@
-name: Service Runner
+name: WOLF Bot
 
 on:
   workflow_dispatch:
 
-# ============================================================
-# منع تشغيل أكثر من نسخة في نفس الوقت
-# عند بدء نسخة جديدة يتم إلغاء النسخة القديمة تلقائياً
-# ============================================================
-concurrency:
-  group: service-runner
-  cancel-in-progress: true
-
 jobs:
-  runner:
+  wolf:
     runs-on: ubuntu-latest
 
-    # الحد الأقصى للتشغيل الحالي = 5 ساعات
     timeout-minutes: 300
 
-    permissions:
-      actions: write
-      contents: read
+    env:
+      WOLF_TOKEN: ${{ secrets.WOLF_TOKEN }}
+      WOLF_APP_CHECK_TOKEN: ${{ secrets.WOLF_APP_CHECK_TOKEN }}
+
+      WOLF_DEVICE: web
+      WOLF_IS_APP_CHECK_ENABLED: "true"
 
     steps:
 
-      # ======================================================
+      # --------------------------------------------
       # Checkout
-      # ======================================================
+      # --------------------------------------------
+
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
+      # --------------------------------------------
+      # Node.js
+      # --------------------------------------------
 
-      # ======================================================
-      # Runtime
-      # ======================================================
-      - name: Setup Runtime
-        uses: actions/setup-node@v7
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: 20
+          cache: npm
 
+      # --------------------------------------------
+      # Install dependencies
+      # --------------------------------------------
 
-      # ======================================================
-      # Media Runtime
-      # ======================================================
-      - name: Install Media Runtime
+      - name: Install dependencies
+        run: npm ci
+
+      # --------------------------------------------
+      # Show environment
+      # --------------------------------------------
+
+      - name: Verify configuration
+        shell: bash
         run: |
-          echo "Installing required runtime..."
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
-          echo "Runtime installed successfully"
-          ffmpeg -version
-
-
-      # ======================================================
-      # Dependencies
-      # ======================================================
-      - name: Install Dependencies
-        run: |
-          echo "Installing dependencies..."
-          npm install
-          echo "Dependencies installed successfully"
-
-
-      # ======================================================
-      # Start Service
-      # ======================================================
-      - name: Start Service
-        env:
-          WOLF_TOKEN: ${{ secrets.WOLF_TOKEN }}
-          WOLF_APP_CHECK_TOKEN: ${{ secrets.WOLF_APP_CHECK_TOKEN }}
-          WOLF_DEVICE: ${{ secrets.WOLF_DEVICE }}
-          WOLF_IS_APP_CHECK_ENABLED: ${{ secrets.WOLF_IS_APP_CHECK_ENABLED }}
-
-          GH_TOKEN: ${{ github.token }}
-
-        run: |
-
           echo "========================================"
-          echo "Service Runtime Started"
-          echo "========================================"
-          echo "Run ID: ${{ github.run_id }}"
-          echo "Device: $WOLF_DEVICE"
-          echo "Security validation: $WOLF_IS_APP_CHECK_ENABLED"
-          echo "Restart interval: 4 hours"
-          echo "Maximum runtime: 5 hours"
+          echo "🐺 WOLF Bot"
           echo "========================================"
 
-          # --------------------------------------------------
-          # تشغيل الخدمة في الخلفية
-          # --------------------------------------------------
-
-          npm start &
-          SERVICE_PID=$!
-
-          echo "Process ID: $SERVICE_PID"
-          echo "Service is running"
-
-          # --------------------------------------------------
-          # الانتظار 4 ساعات
-          # --------------------------------------------------
-
-          echo "Waiting for scheduled restart..."
-
-          sleep 14400
-
-          # --------------------------------------------------
-          # التحقق من أن العملية ما زالت تعمل
-          # --------------------------------------------------
-
-          if kill -0 "$SERVICE_PID" 2>/dev/null; then
-            echo "Current process is still running"
-          else
-            echo "Current process has already stopped"
+          if [ -z "$WOLF_TOKEN" ]; then
+            echo "❌ WOLF_TOKEN is missing"
+            exit 1
           fi
 
-          # --------------------------------------------------
-          # تشغيل نسخة جديدة
-          # --------------------------------------------------
+          echo "✅ WOLF_TOKEN is configured"
 
+          if [ "$WOLF_IS_APP_CHECK_ENABLED" = "true" ]; then
+            if [ -z "$WOLF_APP_CHECK_TOKEN" ]; then
+              echo "❌ WOLF_APP_CHECK_TOKEN is missing"
+              exit 1
+            fi
+
+            echo "✅ App Check token is configured"
+          else
+            echo "ℹ️ App Check disabled"
+          fi
+
+      # --------------------------------------------
+      # Run bot
+      # --------------------------------------------
+
+      - name: Start WOLF
+        run: |
           echo "========================================"
-          echo "Scheduled restart"
-          echo "Starting new workflow..."
-          echo "========================================"
-
-          gh workflow run main.yml \
-            --ref "${{ github.ref_name }}"
-
-          echo "New workflow requested successfully"
-
-          # --------------------------------------------------
-          # إعطاء النسخة الجديدة وقتاً للبدء
-          # --------------------------------------------------
-
-          sleep 10
-
-          # --------------------------------------------------
-          # إيقاف النسخة الحالية
-          # --------------------------------------------------
-
-          echo "========================================"
-          echo "Stopping previous process..."
+          echo "🚀 Starting WOLF service"
           echo "========================================"
 
-          kill "$SERVICE_PID" 2>/dev/null || true
-
-          pkill -P "$SERVICE_PID" 2>/dev/null || true
-
-          sleep 5
-
-          echo "Previous process stopped"
-          echo "New workflow is taking over"
-
-          exit 0
+          node check-wolf.js
