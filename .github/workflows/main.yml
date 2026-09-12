@@ -1,18 +1,18 @@
-name: WOLF Bot
+name: Service Runner
 
 on:
   workflow_dispatch:
 
 # ============================================================
-# منع تشغيل أكثر من WOLF Bot في نفس الوقت
-# عند بدء Workflow جديد يتم إلغاء القديم تلقائياً
+# منع تشغيل أكثر من نسخة في نفس الوقت
+# عند بدء نسخة جديدة يتم إلغاء النسخة القديمة تلقائياً
 # ============================================================
 concurrency:
-  group: wolf-bot
+  group: service-runner
   cancel-in-progress: true
 
 jobs:
-  wolf:
+  runner:
     runs-on: ubuntu-latest
 
     # الحد الأقصى للتشغيل الحالي = 5 ساعات
@@ -32,126 +32,123 @@ jobs:
 
 
       # ======================================================
-      # Node.js
+      # Runtime
       # ======================================================
-      - name: Setup Node.js
+      - name: Setup Runtime
         uses: actions/setup-node@v7
         with:
           node-version: "20"
 
 
       # ======================================================
-      # FFmpeg
+      # Media Runtime
       # ======================================================
-      - name: Install FFmpeg
+      - name: Install Media Runtime
         run: |
-          echo "🎵 Installing FFmpeg..."
+          echo "Installing required runtime..."
           sudo apt-get update
           sudo apt-get install -y ffmpeg
-          echo "✅ FFmpeg installed"
+          echo "Runtime installed successfully"
           ffmpeg -version
 
 
       # ======================================================
-      # npm dependencies
+      # Dependencies
       # ======================================================
-      - name: Install dependencies
+      - name: Install Dependencies
         run: |
-          echo "📦 Installing npm dependencies..."
+          echo "Installing dependencies..."
           npm install
-          echo "✅ Dependencies installed"
+          echo "Dependencies installed successfully"
 
 
       # ======================================================
-      # Start WOLF
+      # Start Service
       # ======================================================
-      - name: Start WOLF Bot
+      - name: Start Service
         env:
           WOLF_TOKEN: ${{ secrets.WOLF_TOKEN }}
           WOLF_APP_CHECK_TOKEN: ${{ secrets.WOLF_APP_CHECK_TOKEN }}
           WOLF_DEVICE: ${{ secrets.WOLF_DEVICE }}
           WOLF_IS_APP_CHECK_ENABLED: ${{ secrets.WOLF_IS_APP_CHECK_ENABLED }}
 
-          # GitHub token لتشغيل Workflow جديد
           GH_TOKEN: ${{ github.token }}
 
         run: |
 
           echo "========================================"
-          echo "🐺 WOLF BOT"
+          echo "Service Runtime Started"
           echo "========================================"
-          echo "🆔 Workflow: ${{ github.run_id }}"
-          echo "📱 Device: $WOLF_DEVICE"
-          echo "🛡️ App Check: $WOLF_IS_APP_CHECK_ENABLED"
-          echo "⏱️ Restart interval: 4 hours"
-          echo "⏱️ Maximum workflow time: 5 hours"
+          echo "Run ID: ${{ github.run_id }}"
+          echo "Device: $WOLF_DEVICE"
+          echo "Security validation: $WOLF_IS_APP_CHECK_ENABLED"
+          echo "Restart interval: 4 hours"
+          echo "Maximum runtime: 5 hours"
           echo "========================================"
 
           # --------------------------------------------------
-          # تشغيل البوت في الخلفية
+          # تشغيل الخدمة في الخلفية
           # --------------------------------------------------
 
           npm start &
-          BOT_PID=$!
+          SERVICE_PID=$!
 
-          echo "🐺 WOLF PID: $BOT_PID"
-          echo "✅ WOLF Bot is running"
+          echo "Process ID: $SERVICE_PID"
+          echo "Service is running"
 
           # --------------------------------------------------
           # الانتظار 4 ساعات
-          # 14400 ثانية = 4 ساعات
           # --------------------------------------------------
 
-          echo "⏳ Waiting 4 hours before restart..."
+          echo "Waiting for scheduled restart..."
 
           sleep 14400
 
           # --------------------------------------------------
-          # التأكد أن البوت ما زال يعمل
+          # التحقق من أن العملية ما زالت تعمل
           # --------------------------------------------------
 
-          if kill -0 "$BOT_PID" 2>/dev/null; then
-            echo "🐺 Current WOLF process is still running"
+          if kill -0 "$SERVICE_PID" 2>/dev/null; then
+            echo "Current process is still running"
           else
-            echo "⚠️ WOLF process has already stopped"
+            echo "Current process has already stopped"
           fi
 
           # --------------------------------------------------
-          # تشغيل Workflow جديد
+          # تشغيل نسخة جديدة
           # --------------------------------------------------
 
           echo "========================================"
-          echo "🔄 4 HOURS COMPLETED"
-          echo "🔄 Starting NEW WOLF workflow..."
+          echo "Scheduled restart"
+          echo "Starting new workflow..."
           echo "========================================"
 
-          gh workflow run wolf.yml \
+          gh workflow run main.yml \
             --ref "${{ github.ref_name }}"
 
-          echo "✅ New WOLF workflow requested"
+          echo "New workflow requested successfully"
 
           # --------------------------------------------------
-          # إعطاء GitHub لحظة لبدء Workflow الجديد
+          # إعطاء النسخة الجديدة وقتاً للبدء
           # --------------------------------------------------
 
           sleep 10
 
           # --------------------------------------------------
-          # إيقاف WOLF الحالي
+          # إيقاف النسخة الحالية
           # --------------------------------------------------
 
           echo "========================================"
-          echo "🛑 Stopping OLD WOLF process..."
+          echo "Stopping previous process..."
           echo "========================================"
 
-          kill "$BOT_PID" 2>/dev/null || true
+          kill "$SERVICE_PID" 2>/dev/null || true
 
-          # قتل أي عمليات Node فرعية مرتبطة بالبوت
-          pkill -P "$BOT_PID" 2>/dev/null || true
+          pkill -P "$SERVICE_PID" 2>/dev/null || true
 
           sleep 5
 
-          echo "✅ Old WOLF process stopped"
-          echo "🔄 New workflow should now take over"
+          echo "Previous process stopped"
+          echo "New workflow is taking over"
 
           exit 0
