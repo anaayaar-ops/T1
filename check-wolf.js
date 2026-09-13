@@ -270,10 +270,7 @@ async function connectService() {
     const port =
         connection?.port ?? 443;
 
-    const device =
-        connection?.query?.device ||
-        WOLF_DEVICE ||
-        "web";
+    const device = WOLF_DEVICE || "web";
 
     console.log("");
     console.log(
