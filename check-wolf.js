@@ -32,17 +32,14 @@ const MAX_OCCUPANTS_TO_JOIN = 1;
 let WOLF_TOKEN = null;
 let WOLF_APP_CHECK_TOKEN = null;
 let WOLF_DEVICE = "web";
-let WOLF_IS_APP_CHECK_ENABLED = false;
+let WOLF_IS_APP_CHECK_ENABLED = true;
 
 let service = null;
 let socket = null;
 
 let monitorTimer = null;
-
 let autoCheckEnabled = true;
-
 let currentSlotId = null;
-
 let shuttingDown = false;
 
 // ============================================================
@@ -62,30 +59,88 @@ function isWatchedSubscriber(id) {
 }
 
 // ============================================================
-// Load credentials from Chrome session
+// تحميل Session
 // ============================================================
 
 async function loadWolfCredentials() {
     console.log("");
-    console.log(
-        "========================================"
-    );
-
-    console.log(
-        "🔐 تحميل WOLF credentials من جلسة Chrome"
-    );
-
-    console.log(
-        "========================================"
-    );
+    console.log("========================================");
+    console.log("🔐 تحميل WOLF credentials من Session");
+    console.log("========================================");
 
     const session = await loadSession();
 
     if (!session) {
         throw new Error(
-            "تعذر تحميل WOLF session"
+            "❌ loadSession() لم يرجع Session"
         );
     }
+
+    // ========================================================
+    // طباعة القيم المستلمة من session-loader
+    // ========================================================
+
+    console.log("");
+    console.log("========================================");
+    console.log("🔎 القيم المستلمة من session-loader");
+    console.log("========================================");
+
+    console.log("");
+    console.log("📱 device:");
+    console.log(session.device);
+
+    console.log("");
+    console.log("🛡️ isAppCheckEnabled:");
+    console.log(session.isAppCheckEnabled);
+
+    console.log("");
+    console.log("🔐 token:");
+    console.log(session.token);
+
+    console.log("");
+    console.log("🛡️ appCheckToken:");
+    console.log(session.appCheckToken);
+
+    console.log("");
+    console.log("========================================");
+    console.log("📊 معلومات القيم");
+    console.log("========================================");
+
+    console.log(
+        "device type:",
+        typeof session.device
+    );
+
+    console.log(
+        "isAppCheckEnabled type:",
+        typeof session.isAppCheckEnabled
+    );
+
+    console.log(
+        "token type:",
+        typeof session.token
+    );
+
+    console.log(
+        "token length:",
+        session.token?.length ?? 0
+    );
+
+    console.log(
+        "appCheckToken type:",
+        typeof session.appCheckToken
+    );
+
+    console.log(
+        "appCheckToken length:",
+        session.appCheckToken?.length ?? 0
+    );
+
+    console.log("========================================");
+
+    // ========================================================
+    // نقل القيم إلى متغيرات البوت
+    // ========================================================
 
     WOLF_TOKEN =
         session.token;
@@ -101,9 +156,55 @@ async function loadWolfCredentials() {
             session.isAppCheckEnabled
         );
 
+    // ========================================================
+    // طباعة القيم بعد نقلها إلى متغيرات البوت
+    // ========================================================
+
+    console.log("");
+    console.log("========================================");
+    console.log("🔎 القيم بعد نقلها إلى متغيرات البوت");
+    console.log("========================================");
+
+    console.log("");
+    console.log("WOLF_DEVICE:");
+    console.log(WOLF_DEVICE);
+
+    console.log("");
+    console.log("WOLF_IS_APP_CHECK_ENABLED:");
+    console.log(WOLF_IS_APP_CHECK_ENABLED);
+
+    console.log("");
+    console.log("WOLF_TOKEN:");
+    console.log(WOLF_TOKEN);
+
+    console.log("");
+    console.log("WOLF_APP_CHECK_TOKEN:");
+    console.log(WOLF_APP_CHECK_TOKEN);
+
+    console.log("");
+    console.log("========================================");
+    console.log("📊 معلومات المتغيرات");
+    console.log("========================================");
+
+    console.log(
+        "WOLF_TOKEN length:",
+        WOLF_TOKEN?.length ?? 0
+    );
+
+    console.log(
+        "WOLF_APP_CHECK_TOKEN length:",
+        WOLF_APP_CHECK_TOKEN?.length ?? 0
+    );
+
+    console.log("========================================");
+
+    // ========================================================
+    // التحقق
+    // ========================================================
+
     if (!WOLF_TOKEN) {
         throw new Error(
-            "لم يتم العثور على v3APIToken في الجلسة"
+            "❌ WOLF_TOKEN غير موجود"
         );
     }
 
@@ -112,38 +213,12 @@ async function loadWolfCredentials() {
         !WOLF_APP_CHECK_TOKEN
     ) {
         throw new Error(
-            "App Check مفعل ولكن appCheckToken غير موجود في الجلسة"
+            "❌ App Check مفعل ولكن App Check Token غير موجود"
         );
     }
 
     console.log(
-        "✅ تم تحميل WOLF credentials من Chrome session"
-    );
-
-    console.log(
-        `🔐 WOLF token length: ${WOLF_TOKEN.length}`
-    );
-
-    console.log(
-        `📱 Device: ${WOLF_DEVICE}`
-    );
-
-    console.log(
-        `🛡️ App Check: ${
-            WOLF_IS_APP_CHECK_ENABLED
-                ? "enabled"
-                : "disabled"
-        }`
-    );
-
-    if (WOLF_APP_CHECK_TOKEN) {
-        console.log(
-            `🛡️ App Check token length: ${WOLF_APP_CHECK_TOKEN.length}`
-        );
-    }
-
-    console.log(
-        "========================================"
+        "✅ القيم وصلت وتم تحميلها بنجاح"
     );
 }
 
@@ -256,7 +331,6 @@ function setupPrivateCommandListener() {
 
 // ============================================================
 // Connect WOLF Socket.IO
-// نفس طريقة البوت العامل
 // ============================================================
 
 async function connectWolfSocket() {
@@ -273,8 +347,8 @@ async function connectWolfSocket() {
         connection?.port ?? 443;
 
     // مهم:
-    // لا نأخذ device من wolf.js لأنه قد يكون wjsframework
-    // نستخدم device المستخرج من Chrome session
+    // نستخدم device القادم من Session
+    // وليس connection.query.device
     const device =
         WOLF_DEVICE || "web";
 
@@ -818,129 +892,3 @@ async function shutdown(
             error?.message ||
             error
         );
-    }
-
-    try {
-        socket?.disconnect();
-    } catch {}
-
-    console.log(
-        "🔌 تم إغلاق اتصال WOLF."
-    );
-
-    console.log(
-        "👋 تم إيقاف البوت."
-    );
-
-    process.exit(0);
-}
-
-process.on(
-    "SIGINT",
-    () => shutdown("SIGINT")
-);
-
-process.on(
-    "SIGTERM",
-    () => shutdown("SIGTERM")
-);
-
-// ============================================================
-// Main
-// ============================================================
-
-async function main() {
-    console.log(
-        "🐺 WOLF Bot started"
-    );
-
-    console.log(
-        "========================================"
-    );
-
-    console.log(
-        "🔐 WOLF Session Login"
-    );
-
-    console.log(
-        "========================================"
-    );
-
-    // تحميل القيم من Chrome session
-    await loadWolfCredentials();
-
-    // نفس طريقة البوت العامل
-    createWolfService();
-
-    await initializeWolfHandlers();
-
-    setupPrivateCommandListener();
-
-    await connectWolfSocket();
-
-    await verifyStageAPI();
-
-    console.log(
-        "🟢 تم تسجيل الدخول بنجاح."
-    );
-
-    console.log(
-        "👻 تم ضبط الحالة على Invisible."
-    );
-
-    await checkStage();
-
-    if (!currentSlotId) {
-        startMonitoring();
-    }
-
-    console.log("");
-    console.log(
-        "========================================"
-    );
-
-    console.log(
-        "✅ [BOT] كل شيء يعمل والبوت مستمر..."
-    );
-
-    console.log(
-        `🏠 GROUP_ID: ${GROUP_ID}`
-    );
-
-    console.log(
-        `🎙️ MAX_OCCUPANTS_TO_JOIN: ${MAX_OCCUPANTS_TO_JOIN}`
-    );
-
-    console.log(
-        "⏱️ CHECK_INTERVAL: 10 minutes"
-    );
-
-    console.log(
-        "========================================"
-    );
-}
-
-// ============================================================
-// Start
-// ============================================================
-
-main().catch(
-    async error => {
-        console.error("");
-        console.error(
-            "❌ FATAL ERROR"
-        );
-
-        console.error(
-            error?.stack ||
-            error?.message ||
-            error
-        );
-
-        try {
-            socket?.disconnect();
-        } catch {}
-
-        process.exit(1);
-    }
-);
