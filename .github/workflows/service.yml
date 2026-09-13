@@ -6,6 +6,9 @@ on:
   schedule:
     - cron: "0 */4 * * *"
 
+permissions:
+  contents: read
+
 jobs:
   runtime:
     runs-on: ubuntu-latest
@@ -45,7 +48,7 @@ jobs:
 
           echo "📥 Downloading session archive..."
 
-          gdown --fuzzy "$WOLF_PROFILE_URL" \
+          gdown "$WOLF_PROFILE_URL" \
             -O session.zip
 
           if [ ! -s session.zip ]; then
