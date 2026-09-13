@@ -1,3 +1,4 @@
+```js
 import { chromium } from "playwright";
 import fs from "fs";
 import path from "path";
@@ -41,14 +42,9 @@ function findProfileRoot(root) {
         return null;
     }
 
-    // Direct Chrome profile
     if (
-        fs.existsSync(
-            path.join(root, "Local State")
-        ) ||
-        fs.existsSync(
-            path.join(root, "Default")
-        )
+        fs.existsSync(path.join(root, "Local State")) ||
+        fs.existsSync(path.join(root, "Default"))
     ) {
         return root;
     }
@@ -65,23 +61,14 @@ function findProfileRoot(root) {
         }
 
         const candidate =
-            path.join(
-                root,
-                entry.name
-            );
+            path.join(root, entry.name);
 
         if (
             fs.existsSync(
-                path.join(
-                    candidate,
-                    "Local State"
-                )
+                path.join(candidate, "Local State")
             ) ||
             fs.existsSync(
-                path.join(
-                    candidate,
-                    "Default"
-                )
+                path.join(candidate, "Default")
             )
         ) {
             return candidate;
@@ -102,10 +89,8 @@ async function extractSessionArchive(
 ) {
 
     if (!fs.existsSync(zipFile)) {
-
         throw new Error(
-            "Session ZIP not found: " +
-            zipFile
+            "Session ZIP not found: " + zipFile
         );
     }
 
@@ -117,13 +102,10 @@ async function extractSessionArchive(
     );
 
     const childProcess =
-        await import(
-            "child_process"
-        );
+        await import("child_process");
 
     const execFileSync =
         childProcess.execFileSync;
-
 
     if (process.platform === "win32") {
 
@@ -132,17 +114,10 @@ async function extractSessionArchive(
             [
                 "-NoProfile",
                 "-Command",
-
                 "Expand-Archive -LiteralPath '" +
-                    zipFile.replace(
-                        /'/g,
-                        "''"
-                    ) +
+                    zipFile.replace(/'/g, "''") +
                     "' -DestinationPath '" +
-                    destination.replace(
-                        /'/g,
-                        "''"
-                    ) +
+                    destination.replace(/'/g, "''") +
                     "' -Force"
             ],
             {
@@ -152,7 +127,6 @@ async function extractSessionArchive(
 
         return;
     }
-
 
     execFileSync(
         "unzip",
@@ -170,144 +144,42 @@ async function extractSessionArchive(
 
 
 // ============================================================
-// Read Credentials Directly From Chrome Local Storage
+// Read ONLY the required four values
 // ============================================================
 
-async function readWolfCredentials(
-    page
-) {
+async function readWolfCredentials(page) {
 
     const data =
         await page.evaluate(() => {
 
-            function read(key) {
-
+            const read = (key) => {
                 try {
-                    return localStorage.getItem(
-                        key
-                    );
+                    return localStorage.getItem(key);
                 } catch {
                     return null;
                 }
-            }
+            };
 
             return {
-
-                v3APIToken:
-                    read("v3APIToken"),
-
-                appCheckToken:
-                    read("appCheckToken"),
-
-                deviceToken:
-                    read("deviceToken")
+                token: read("v3APIToken"),
+                appCheckToken: read("appCheckToken")
             };
         });
 
-
-    if (!data) {
-        return null;
-    }
-
-
-    const v3APIToken =
-        data.v3APIToken ||
-        data.deviceToken ||
-        null;
-
-    const appCheckToken =
-        data.appCheckToken ||
-        null;
-
-
     if (
-        !v3APIToken ||
-        !appCheckToken
+        !data?.token ||
+        !data?.appCheckToken
     ) {
         return null;
     }
 
-
+    // ONLY these four values are returned.
     return {
-
-        v3APIToken,
-
-        appCheckToken,
-
-        device:
-            DEFAULT_DEVICE,
-
-        isAppCheckEnabled:
-            DEFAULT_APP_CHECK_ENABLED
+        device: DEFAULT_DEVICE,
+        isAppCheckEnabled: DEFAULT_APP_CHECK_ENABLED,
+        token: data.token,
+        appCheckToken: data.appCheckToken
     };
-}
-
-
-// ============================================================
-// Diagnostic Storage Info
-// ============================================================
-
-async function printStorageStatus(
-    page
-) {
-
-    const storage =
-        await page.evaluate(() => {
-
-            const result = {};
-
-            for (
-                let i = 0;
-                i < localStorage.length;
-                i++
-            ) {
-
-                const key =
-                    localStorage.key(i);
-
-                if (!key) {
-                    continue;
-                }
-
-                const value =
-                    localStorage.getItem(
-                        key
-                    );
-
-                result[key] =
-                    value?.length || 0;
-            }
-
-            return result;
-        });
-
-
-    console.log("");
-    console.log(
-        "📦 WOLF localStorage status:"
-    );
-
-
-    for (
-        const [key, length]
-        of Object.entries(storage)
-    ) {
-
-        if (
-            key === "v3APIToken" ||
-            key === "appCheckToken" ||
-            key === "deviceToken"
-        ) {
-
-            console.log(
-                `🔐 ${key}: FOUND (${length})`
-            );
-
-        }
-
-    }
-
-    console.log("");
 }
 
 
@@ -317,66 +189,28 @@ async function printStorageStatus(
 
 export async function loadSession() {
 
-    console.log("");
-    console.log(
-        "========================================"
-    );
-    console.log(
-        "🔐 Loading WOLF session from Chrome"
-    );
-    console.log(
-        "========================================"
-    );
-    console.log("");
-
-
     // ========================================================
     // Locate Profile
     // ========================================================
 
     let profileDir = null;
 
-
     if (
         !process.env.WOLF_PROFILE_ZIP &&
-        fs.existsSync(
-            LOCAL_PROFILE
-        )
+        fs.existsSync(LOCAL_PROFILE)
     ) {
 
-        profileDir =
-            LOCAL_PROFILE;
-
-        console.log(
-            "📁 Using local wolf-profile"
-        );
+        profileDir = LOCAL_PROFILE;
 
     } else {
 
-        console.log(
-            "📦 Session archive detected."
-        );
-
-
-        if (
-            !fs.existsSync(
-                PROFILE_ZIP
-            )
-        ) {
-
+        if (!fs.existsSync(PROFILE_ZIP)) {
             throw new Error(
-                "Session ZIP not found: " +
-                PROFILE_ZIP
+                "Session ZIP not found: " + PROFILE_ZIP
             );
         }
 
-
-        if (
-            fs.existsSync(
-                RUNTIME_DIR
-            )
-        ) {
-
+        if (fs.existsSync(RUNTIME_DIR)) {
             fs.rmSync(
                 RUNTIME_DIR,
                 {
@@ -386,7 +220,6 @@ export async function loadSession() {
             );
         }
 
-
         fs.mkdirSync(
             RUNTIME_DIR,
             {
@@ -394,56 +227,30 @@ export async function loadSession() {
             }
         );
 
-
-        console.log(
-            "📦 Extracting Chrome profile..."
-        );
-
-
         await extractSessionArchive(
             PROFILE_ZIP,
             RUNTIME_DIR
         );
 
-
         profileDir =
-            findProfileRoot(
-                RUNTIME_DIR
-            );
-
+            findProfileRoot(RUNTIME_DIR);
 
         if (!profileDir) {
-
             throw new Error(
                 "Chrome profile could not be located inside session archive."
             );
         }
-
     }
-
-
-    console.log("");
-    console.log(
-        "📁 Profile: " +
-        profileDir
-    );
-    console.log("");
 
 
     // ========================================================
     // Launch Chrome
     // ========================================================
 
-    console.log(
-        "🌐 Opening saved Chrome session..."
-    );
-
-
     const context =
         await chromium.launchPersistentContext(
             profileDir,
             {
-
                 headless: false,
 
                 viewport: {
@@ -467,192 +274,76 @@ export async function loadSession() {
 
         let page;
 
-        const pages =
-            context.pages();
+        const pages = context.pages();
 
-
-        if (
-            pages.length > 0
-        ) {
-
-            page =
-                pages[0];
-
+        if (pages.length > 0) {
+            page = pages[0];
         } else {
-
-            page =
-                await context.newPage();
-
+            page = await context.newPage();
         }
-
-
-        // ====================================================
-        // CDP
-        // ====================================================
-
-        const cdp =
-            await context.newCDPSession(
-                page
-            );
-
-
-        await cdp.send(
-            "Network.enable"
-        );
-
-        await cdp.send(
-            "Page.enable"
-        );
-
-
-        console.log(
-            "✅ CDP Network enabled"
-        );
 
 
         // ====================================================
         // Open WOLF
         // ====================================================
 
-        console.log("");
-        console.log(
-            "🌐 Opening WOLF..."
-        );
-
-
         await page.goto(
             WOLF_URL,
             {
-                waitUntil:
-                    "domcontentloaded",
-
-                timeout:
-                    60000
+                waitUntil: "domcontentloaded",
+                timeout: 60000
             }
         );
 
-
-        console.log("");
-        console.log(
-            "🌐 Session page: " +
-            page.url()
-        );
+        await page.waitForTimeout(10000);
 
 
         // ====================================================
-        // Wait for WOLF to initialize
+        // Try to read credentials
         // ====================================================
-
-        console.log("");
-        console.log(
-            "⏳ Waiting for WOLF session..."
-        );
-
-
-        await page.waitForTimeout(
-            10000
-        );
-
-
-        // ====================================================
-        // First credential read
-        // ====================================================
-
-        await printStorageStatus(
-            page
-        );
-
 
         let credentials =
-            await readWolfCredentials(
-                page
-            );
+            await readWolfCredentials(page);
 
 
         // ====================================================
-        // Retry
+        // Retry #1
         // ====================================================
 
         if (!credentials) {
 
-            console.log(
-                "⚠️ WOLF credentials not found yet."
-            );
-
-            console.log(
-                "🔄 Reloading WOLF..."
-            );
-
-
             await page.reload(
                 {
-                    waitUntil:
-                        "domcontentloaded",
-
-                    timeout:
-                        60000
+                    waitUntil: "domcontentloaded",
+                    timeout: 60000
                 }
             );
 
-
-            await page.waitForTimeout(
-                15000
-            );
-
-
-            await printStorageStatus(
-                page
-            );
-
+            await page.waitForTimeout(15000);
 
             credentials =
-                await readWolfCredentials(
-                    page
-                );
+                await readWolfCredentials(page);
         }
 
 
         // ====================================================
-        // Final retry
+        // Retry #2
         // ====================================================
 
         if (!credentials) {
 
-            console.log(
-                "⚠️ Credentials still not found."
-            );
-
-            console.log(
-                "🔄 Opening WOLF again..."
-            );
-
-
             await page.goto(
                 WOLF_URL,
                 {
-                    waitUntil:
-                        "domcontentloaded",
-
-                    timeout:
-                        60000
+                    waitUntil: "domcontentloaded",
+                    timeout: 60000
                 }
             );
 
-
-            await page.waitForTimeout(
-                15000
-            );
-
-
-            await printStorageStatus(
-                page
-            );
-
+            await page.waitForTimeout(15000);
 
             credentials =
-                await readWolfCredentials(
-                    page
-                );
+                await readWolfCredentials(page);
         }
 
 
@@ -663,87 +354,30 @@ export async function loadSession() {
         if (!credentials) {
 
             throw new Error(
-                "WOLF credentials were not found in Chrome localStorage."
+                "Required WOLF credentials were not found."
             );
         }
 
 
         // ====================================================
-        // Success
-        // ====================================================
-
-        console.log("");
-        console.log(
-            "========================================"
-        );
-
-        console.log(
-            "✅ WOLF credentials found"
-        );
-
-        console.log(
-            "========================================"
-        );
-
-
-        console.log(
-            "🔐 v3APIToken length: " +
-            credentials
-                .v3APIToken
-                .length
-        );
-
-
-        console.log(
-            "🛡️ App Check token length: " +
-            credentials
-                .appCheckToken
-                .length
-        );
-
-
-        console.log(
-            "📱 Device: " +
-            credentials.device
-        );
-
-
-        console.log(
-            "🛡️ App Check: " +
-            (
-                credentials.isAppCheckEnabled
-                    ? "enabled"
-                    : "disabled"
-            )
-        );
-
-
-        // ====================================================
         // Close Chrome
-        // ====================================================
-
-        console.log("");
-        console.log(
-            "🔒 Closing Chrome session..."
-        );
-
+        // ========================================================
 
         await context.close();
 
 
-        console.log(
-            "✅ Chrome session closed."
-        );
-
-
-        console.log("");
-
-
         // ====================================================
-        // Return
-        // ====================================================
+        // Return ONLY four values
+        // ========================================================
 
-        return credentials;
+        return {
+            device: credentials.device,
+            isAppCheckEnabled:
+                credentials.isAppCheckEnabled,
+            token: credentials.token,
+            appCheckToken:
+                credentials.appCheckToken
+        };
 
     } catch (error) {
 
@@ -756,3 +390,21 @@ export async function loadSession() {
         throw error;
     }
 }
+```
+
+### الناتج من `loadSession()`
+
+سيكون **بالضبط** بهذا الشكل:
+
+```js
+{
+    device: "web",
+    isAppCheckEnabled: true,
+    token: "WE-...",
+    appCheckToken: "eyJ..."
+}
+```
+
+ولا يتم استخراج أو إرجاع `deviceToken` إطلاقًا، ولا يتم طباعة أي من التوكنات في الـ GitHub Actions logs.
+
+**مهم:** إذا كان `check-wolf.js` الحالي عندك ما زال ينتظر `session.v3APIToken` و`session.appCheckToken`، لازم نعدله أيضًا ليستخدم الأسماء الجديدة `session.token` و`session.appCheckToken`.
