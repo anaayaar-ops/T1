@@ -1,0 +1,65 @@
+name: Service Runtime
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    - cron: "0 */4 * * *"
+
+jobs:
+  runtime:
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 240
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Install downloader
+        run: python3 -m pip install --upgrade gdown
+
+      - name: Download session
+        env:
+          WOLF_PROFILE_URL: ${{ secrets.WOLF_PROFILE_URL }}
+        run: |
+          if [ -z "$WOLF_PROFILE_URL" ]; then
+            echo "Session URL is missing."
+            exit 1
+          fi
+
+          echo "Downloading session..."
+
+          gdown --fuzzy "$WOLF_PROFILE_URL" \
+            -O session.zip
+
+          if [ ! -s session.zip ]; then
+            echo "Session archive is empty."
+            exit 1
+          fi
+
+          echo "Session downloaded."
+
+      - name: Start runtime
+        env:
+          WOLF_PROFILE_ZIP: ${{ github.workspace }}/session.zip
+
+          WOLF_DEVICE: web
+
+          WOLF_IS_APP_CHECK_ENABLED: "false"
+
+        run: |
+          node check-wolf.js
