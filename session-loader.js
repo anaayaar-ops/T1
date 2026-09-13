@@ -274,10 +274,6 @@ export async function loadSession() {
             }
         );
 
-        /*
-         * السماح للتطبيق بتحميل بيانات
-         * الجلسة وتهيئة localStorage.
-         */
         await page.waitForTimeout(
             10000
         );
@@ -288,10 +284,6 @@ export async function loadSession() {
 
         let token = null;
 
-        /*
-         * أحيانًا يحتاج التطبيق عدة ثوانٍ
-         * قبل ظهور القيمة.
-         */
         for (
             let attempt = 0;
             attempt < 20;
@@ -318,10 +310,6 @@ export async function loadSession() {
             );
         }
 
-        /*
-         * نقرأ هذا أيضًا لأن بعض إعدادات
-         * الاتصال قد تحتاجه مستقبلًا.
-         */
         const deviceToken =
             await readLocalStorage(
                 page,
@@ -345,10 +333,6 @@ export async function loadSession() {
             } catch {}
         }
 
-        /*
-         * حذف النسخة المؤقتة فور انتهاء
-         * عملية القراءة.
-         */
         removePath(
             RUNTIME_DIR
         );
