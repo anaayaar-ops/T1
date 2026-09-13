@@ -1,5 +1,6 @@
 import wolfjs from "wolf.js";
 import { io } from "socket.io-client";
+import { loadSession } from "./session-loader.js";
 
 const { WOLF, OnlineState } = wolfjs;
 
@@ -27,7 +28,9 @@ const MAX_OCCUPANTS_TO_JOIN = 1;
 // Environment Configuration
 // ============================================================
 
-const WOLF_TOKEN = process.env.WOLF_TOKEN;
+// Optional fallback.
+// Normally this will be populated by loadSession().
+let WOLF_TOKEN = process.env.WOLF_TOKEN || "";
 
 const WOLF_APP_CHECK_TOKEN =
     process.env.WOLF_APP_CHECK_TOKEN || "";
@@ -43,15 +46,6 @@ const WOLF_IS_APP_CHECK_ENABLED =
 // ============================================================
 // Validate Environment
 // ============================================================
-
-if (!WOLF_TOKEN) {
-    console.error("");
-    console.error("❌ WOLF_TOKEN is missing");
-    console.error(
-        "Add WOLF_TOKEN to GitHub Actions Secrets."
-    );
-    process.exit(1);
-}
 
 if (
     WOLF_IS_APP_CHECK_ENABLED &&
@@ -748,11 +742,7 @@ async function main() {
     );
 
     console.log(
-        "🐺 WOLF 2.7.10"
-    );
-
-    console.log(
-        "🔐 Loading credentials"
+        "🔐 Loading session"
     );
 
     console.log(
@@ -769,6 +759,25 @@ async function main() {
                 ? "enabled"
                 : "disabled"
         }`
+    );
+
+    const session =
+        await loadSession();
+
+    if (
+        !session ||
+        !session.token
+    ) {
+        throw new Error(
+            "Session loader did not return a valid token"
+        );
+    }
+
+    WOLF_TOKEN =
+        session.token;
+
+    console.log(
+        "✅ Session initialized"
     );
 
     createService();
