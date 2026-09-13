@@ -32,12 +32,12 @@ let service = null;
 let socket = null;
 let monitorTimer = null;
 
-let currentSlotId = null;
 let autoCheckEnabled = true;
+let currentSlotId = null;
 let shuttingDown = false;
 
 // ============================================================
-// Credentials
+// Session Credentials
 // ============================================================
 
 let WOLF_TOKEN = "";
@@ -65,9 +65,15 @@ function isWatchedSubscriber(id) {
 
 async function loadWolfCredentials() {
     console.log("");
-    console.log("========================================");
-    console.log("🌐 فتح Chrome لاستخراج جلسة WOLF");
-    console.log("========================================");
+    console.log(
+        "========================================"
+    );
+    console.log(
+        "🌐 فتح Chrome لاستخراج جلسة WOLF"
+    );
+    console.log(
+        "========================================"
+    );
 
     const session = await loadSession();
 
@@ -79,7 +85,7 @@ async function loadWolfCredentials() {
 
     if (!session.token) {
         throw new Error(
-            "لم يتم العثور على v3APIToken في جلسة Chrome"
+            "لم يتم العثور على v3APIToken"
         );
     }
 
@@ -95,51 +101,57 @@ async function loadWolfCredentials() {
         session.isAppCheckEnabled === true;
 
     console.log("");
-    console.log("========================================");
-    console.log("✅ تم استخراج WOLF credentials");
-    console.log("========================================");
-
     console.log(
-        `📱 Device: ${WOLF_DEVICE}`
+        "========================================"
+    );
+    console.log(
+        "✅ تم استخراج WOLF credentials"
+    );
+    console.log(
+        "========================================"
     );
 
     console.log(
-        `🔐 Token موجود: ${WOLF_TOKEN ? "true" : "false"}`
+        `📱 device: ${WOLF_DEVICE}`
     );
 
     console.log(
-        `🔐 Token length: ${WOLF_TOKEN.length}`
-    );
-
-    console.log(
-        `🛡️ App Check: ${
+        `🛡️ isAppCheckEnabled: ${
             WOLF_IS_APP_CHECK_ENABLED
-                ? "enabled"
-                : "disabled"
         }`
     );
 
     console.log(
-        `🛡️ App Check token موجود: ${
+        `🔐 token موجود: ${
+            WOLF_TOKEN ? "true" : "false"
+        }`
+    );
+
+    console.log(
+        `🔐 token length: ${WOLF_TOKEN.length}`
+    );
+
+    console.log(
+        `🛡️ appCheckToken موجود: ${
             WOLF_APP_CHECK_TOKEN
                 ? "true"
                 : "false"
         }`
     );
 
-    if (WOLF_APP_CHECK_TOKEN) {
-        console.log(
-            `🛡️ App Check token length: ${WOLF_APP_CHECK_TOKEN.length}`
-        );
-    }
+    console.log(
+        `🛡️ appCheckToken length: ${
+            WOLF_APP_CHECK_TOKEN.length
+        }`
+    );
 
     console.log("");
     console.log(
-        "🔒 جلسة Chrome انتهى استخدامها."
+        "🔒 Chrome انتهى استخدامه."
     );
 
     console.log(
-        "🔌 من الآن الاتصال سيكون عبر Socket.IO فقط."
+        "🔌 سيتم الاتصال الآن عبر Socket.IO فقط."
     );
 
     console.log(
@@ -168,9 +180,8 @@ function createService() {
 // ============================================================
 
 async function initializeHandlers() {
-    console.log("");
     console.log(
-        "⚙️ Initializing wolf.js handlers..."
+        "⚙️ Initializing service handlers..."
     );
 
     await service.websocket.init();
@@ -217,7 +228,7 @@ function setupCommandListener() {
                 }
 
                 console.log(
-                    `📩 Private command from ${senderId}: ${text}`
+                    `📩 Command received from ${senderId}: ${text}`
                 );
 
                 if (text === LEAVE_COMMAND) {
@@ -247,7 +258,7 @@ function setupCommandListener() {
 }
 
 // ============================================================
-// Connect Through Socket.IO
+// Connect Service
 // ============================================================
 
 async function connectService() {
@@ -263,6 +274,11 @@ async function connectService() {
     const port =
         connection?.port ?? 443;
 
+    const device =
+        connection?.query?.device ||
+        WOLF_DEVICE ||
+        "web";
+
     console.log("");
     console.log(
         "========================================"
@@ -277,7 +293,7 @@ async function connectService() {
     );
 
     console.log(
-        `🐺 wolf.js version: 2.7.10`
+        "🐺 wolf.js version: 2.7.10"
     );
 
     console.log(
@@ -289,7 +305,7 @@ async function connectService() {
     );
 
     console.log(
-        `📱 Device: ${WOLF_DEVICE}`
+        `📱 Device: ${device}`
     );
 
     console.log(
@@ -300,16 +316,18 @@ async function connectService() {
         }`
     );
 
-    // --------------------------------------------------------
-    // Create Socket.IO connection
-    // --------------------------------------------------------
+    // ========================================================
+    // IMPORTANT
+    //
+    // هذا هو نفس أسلوب الاتصال الذي يعمل عندك.
+    //
+    // Chrome لم يعد مستخدمًا هنا.
+    // ========================================================
 
     socket = io(
         `${host}:${port}`,
         {
-            transports: [
-                "websocket"
-            ],
+            transports: ["websocket"],
 
             reconnection: true,
 
@@ -318,7 +336,7 @@ async function connectService() {
             query: {
                 token: WOLF_TOKEN,
 
-                device: WOLF_DEVICE,
+                device,
 
                 state:
                     service.config.framework
@@ -341,15 +359,15 @@ async function connectService() {
         }
     );
 
-    // --------------------------------------------------------
-    // Connect Socket.IO with wolf.js
-    // --------------------------------------------------------
+    // ========================================================
+    // ربط الـ Socket مع wolf.js
+    // ========================================================
 
     service.websocket.socket = socket;
 
-    // --------------------------------------------------------
-    // Socket Events
-    // --------------------------------------------------------
+    // ========================================================
+    // Socket Connected
+    // ========================================================
 
     socket.on(
         "connect",
@@ -360,11 +378,11 @@ async function connectService() {
             );
 
             console.log(
-                "🔗 Socket.IO connected"
+                "🔗 Service connection established"
             );
 
             console.log(
-                `🔗 Socket ID: ${socket.id}`
+                `🔗 Connection ID: ${socket.id}`
             );
 
             console.log(
@@ -373,75 +391,52 @@ async function connectService() {
         }
     );
 
+    // ========================================================
+    // Connection Error
+    // ========================================================
+
     socket.on(
         "connect_error",
         error => {
-            console.error("");
             console.error(
-                "❌ Socket.IO connect_error:"
-            );
-
-            console.error(
+                "❌ Connection error:",
                 error?.message ||
                 error
             );
         }
     );
+
+    // ========================================================
+    // Socket Error
+    // ========================================================
 
     socket.on(
         "error",
         error => {
             console.error(
-                "❌ Socket.IO error:",
+                "❌ Socket error:",
                 error?.message ||
                 error
             );
         }
     );
 
-    socket.io.on(
-        "error",
-        error => {
-            console.error(
-                "❌ Socket.IO Manager error:",
-                error?.message ||
-                error
-            );
-        }
-    );
-
-    socket.io.on(
-        "reconnect_attempt",
-        attempt => {
-            console.log(
-                `🔄 Socket.IO reconnect attempt: ${attempt}`
-            );
-        }
-    );
-
-    socket.io.on(
-        "reconnect_error",
-        error => {
-            console.error(
-                "❌ Socket.IO reconnect error:",
-                error?.message ||
-                error
-            );
-        }
-    );
+    // ========================================================
+    // Disconnect
+    // ========================================================
 
     socket.on(
         "disconnect",
         reason => {
             console.log(
-                `🔌 Socket.IO disconnected: ${reason}`
+                `🔌 Connection closed: ${reason}`
             );
         }
     );
 
-    // --------------------------------------------------------
-    // WOLF Event Handlers
-    // --------------------------------------------------------
+    // ========================================================
+    // WOLF Events
+    // ========================================================
 
     socket.onAny(
         async (eventName, data) => {
@@ -469,22 +464,25 @@ async function connectService() {
         }
     );
 
-    // --------------------------------------------------------
+    // ========================================================
     // Connect
-    // --------------------------------------------------------
+    // ========================================================
 
-    console.log("");
     console.log(
-        "🔌 Connecting through Socket.IO..."
+        "🔌 Connecting..."
     );
 
     socket.connect();
+
+    // ========================================================
+    // Wait Until wolf.js Gets Subscriber
+    // ========================================================
 
     await waitForAuthorization();
 }
 
 // ============================================================
-// Wait For WOLF Authorization
+// Wait For Authorization
 // ============================================================
 
 async function waitForAuthorization(
@@ -493,7 +491,7 @@ async function waitForAuthorization(
     const start = Date.now();
 
     console.log(
-        "⏳ Waiting for WOLF authorization..."
+        "⏳ Waiting for authorization..."
     );
 
     while (
@@ -508,7 +506,7 @@ async function waitForAuthorization(
             );
 
             console.log(
-                "✅ WOLF authorization complete"
+                "✅ Authorization complete"
             );
 
             console.log(
@@ -536,7 +534,7 @@ async function waitForAuthorization(
     }
 
     throw new Error(
-        "Timeout waiting for WOLF authorization"
+        "Authorization timeout"
     );
 }
 
@@ -545,7 +543,6 @@ async function waitForAuthorization(
 // ============================================================
 
 async function verifyStageAPI() {
-    console.log("");
     console.log(
         `🧪 Checking Stage service for group ${GROUP_ID}...`
     );
@@ -587,7 +584,6 @@ async function checkStage() {
         return;
     }
 
-    console.log("");
     console.log(
         `🎙️ Checking Stage for group ${GROUP_ID}...`
     );
@@ -668,11 +664,10 @@ async function checkStage() {
 }
 
 // ============================================================
-// Force Join Stage
+// Force Join
 // ============================================================
 
 async function forceJoinStage() {
-    console.log("");
     console.log(
         `🎙️ Forced Stage join requested for ${GROUP_ID}...`
     );
@@ -745,7 +740,6 @@ async function leaveStage() {
         return;
     }
 
-    console.log("");
     console.log(
         `🛑 Leaving slot ${currentSlotId}...`
     );
@@ -798,13 +792,8 @@ function startMonitoring() {
         return;
     }
 
-    console.log("");
     console.log(
         "🔄 Periodic monitoring started"
-    );
-
-    console.log(
-        "⏱️ Next check in 10 minutes"
     );
 
     monitorTimer =
@@ -879,7 +868,7 @@ async function shutdown(signal) {
     }
 
     // --------------------------------------------------------
-    // Disconnect Socket.IO
+    // Close Socket.IO
     // --------------------------------------------------------
 
     try {
@@ -887,7 +876,7 @@ async function shutdown(signal) {
     } catch {}
 
     console.log(
-        "🔌 Socket.IO connection closed."
+        "🔌 Connection closed."
     );
 
     console.log(
@@ -922,7 +911,7 @@ async function main() {
     );
 
     console.log(
-        "🐺 WOLF Bot 2.7.10"
+        "🐺 WOLF 2.7.10"
     );
 
     console.log(
@@ -933,71 +922,78 @@ async function main() {
         "🚀 Service started"
     );
 
-    // --------------------------------------------------------
-    // 1. Open Chrome
-    // 2. Extract WOLF credentials
-    // 3. Close Chrome
-    // --------------------------------------------------------
+    // ========================================================
+    // STEP 1
+    // فتح Chrome واستخراج credentials
+    // ========================================================
 
     await loadWolfCredentials();
 
-    // --------------------------------------------------------
-    // 4. Create wolf.js
-    // --------------------------------------------------------
+    // ========================================================
+    // STEP 2
+    // إنشاء wolf.js
+    // ========================================================
 
     createService();
 
-    // --------------------------------------------------------
-    // 5. Initialize handlers
-    // --------------------------------------------------------
+    // ========================================================
+    // STEP 3
+    // تحميل handlers
+    // ========================================================
 
     await initializeHandlers();
 
-    // --------------------------------------------------------
-    // 6. Private command listener
-    // --------------------------------------------------------
+    // ========================================================
+    // STEP 4
+    // Listener للأوامر الخاصة
+    // ========================================================
 
     setupCommandListener();
 
-    // --------------------------------------------------------
-    // 7. Chrome is already closed here.
-    //    Connection is Socket.IO only.
-    // --------------------------------------------------------
+    // ========================================================
+    // STEP 5
+    //
+    // Chrome مغلق الآن.
+    //
+    // الاتصال التالي Socket.IO فقط.
+    // ========================================================
 
     await connectService();
 
-    // --------------------------------------------------------
-    // 8. Verify Stage
-    // --------------------------------------------------------
+    // ========================================================
+    // STEP 6
+    // Verify Stage
+    // ========================================================
 
     await verifyStageAPI();
 
-    console.log("");
     console.log(
         "🟢 Authorization successful."
     );
 
     console.log(
-        "👻 Presence: Invisible."
+        "👻 Presence set to Invisible."
     );
 
-    // --------------------------------------------------------
-    // 9. Initial Stage check
-    // --------------------------------------------------------
+    // ========================================================
+    // STEP 7
+    // أول فحص للـ Stage
+    // ========================================================
 
     await checkStage();
 
-    // --------------------------------------------------------
-    // 10. Start periodic monitoring
-    // --------------------------------------------------------
+    // ========================================================
+    // STEP 8
+    // تشغيل المراقبة
+    // ========================================================
 
     if (!currentSlotId) {
         startMonitoring();
     }
 
-    // --------------------------------------------------------
+    // ========================================================
     // Running
-    // --------------------------------------------------------
+    // ========================================================
 
     console.log("");
     console.log(
