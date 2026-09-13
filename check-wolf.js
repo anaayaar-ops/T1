@@ -1,6 +1,5 @@
 import wolfjs from "wolf.js";
 import { io } from "socket.io-client";
-import WebSocket from "ws";
 import { loadSession } from "./session-loader.js";
 
 const { WOLF, OnlineState } = wolfjs;
@@ -27,7 +26,6 @@ const MAX_OCCUPANTS_TO_JOIN = 1;
 
 // ============================================================
 // Credentials
-// يتم تحميلها من Chrome Session
 // ============================================================
 
 let WOLF_TOKEN = "";
@@ -77,6 +75,7 @@ function isWatchedSubscriber(id) {
 // ============================================================
 
 async function initializeSession() {
+
     console.log("");
     console.log(
         "========================================"
@@ -162,6 +161,7 @@ async function initializeSession() {
 // ============================================================
 
 function createWolfService() {
+
     service = new WOLF();
 
     service.config.framework.login.token =
@@ -183,6 +183,7 @@ function createWolfService() {
 // ============================================================
 
 async function initializeWolfHandlers() {
+
     console.log(
         "⚙️ [WOLF] Initializing wolf.js handlers..."
     );
@@ -204,10 +205,13 @@ async function initializeWolfHandlers() {
 // ============================================================
 
 function setupPrivateCommandListener() {
+
     service.on(
         "privateMessage",
         async message => {
+
             try {
+
                 const senderId = Number(
                     message?.sourceSubscriberId ??
                     message?.senderId ??
@@ -241,18 +245,23 @@ function setupPrivateCommandListener() {
                 if (
                     text === LEAVE_COMMAND
                 ) {
+
                     await leaveStage();
+
                     return;
                 }
 
                 if (
                     text === JOIN_COMMAND
                 ) {
+
                     await forceJoinStage();
+
                     return;
                 }
 
             } catch (error) {
+
                 console.error(
                     "❌ privateMessage error:",
                     error?.message || error
@@ -273,8 +282,7 @@ function setupPrivateCommandListener() {
 async function connectWolfSocket() {
 
     // ========================================================
-    // مهم:
-    // نستخدم نفس السيرفر الذي ظهرت منه جلسة Chrome
+    // نفس Host الذي تستخدمه Chrome
     // ========================================================
 
     const host =
@@ -282,12 +290,17 @@ async function connectWolfSocket() {
 
     const port = 443;
 
-    // ========================================================
-    // Device من Chrome Session
-    // ========================================================
-
     const device =
         WOLF_DEVICE || "web";
+
+    // ========================================================
+    // Chrome-like headers
+    // ========================================================
+
+    const chromeUserAgent =
+        "Mozilla/5.0 (X11; Linux x86_64) " +
+        "AppleWebKit/537.36 (KHTML, like Gecko) " +
+        "Chrome/140.0.0.0 Safari/537.36";
 
     console.log("");
     console.log(
@@ -355,7 +368,32 @@ async function connectWolfSocket() {
     );
 
     // ========================================================
-    // Socket.IO
+    // مهم جدًا:
+    //
+    // Chrome Socket URL الذي التقطناه لا يحتوي state.
+    //
+    // لذلك لا نرسل state هنا.
+    // ========================================================
+
+    const query = {
+        device,
+
+        isAppCheckEnabled:
+            WOLF_IS_APP_CHECK_ENABLED
+                ? "true"
+                : "false",
+
+        token:
+            WOLF_TOKEN,
+
+        appCheckToken:
+            WOLF_IS_APP_CHECK_ENABLED
+                ? WOLF_APP_CHECK_TOKEN
+                : undefined
+    };
+
+    // ========================================================
+    // إنشاء Socket.IO
     // ========================================================
 
     socket = io(
@@ -365,32 +403,38 @@ async function connectWolfSocket() {
                 "websocket"
             ],
 
+            path: "/socket.io",
+
             reconnection: true,
 
             autoConnect: false,
 
-            query: {
-                token:
-                    WOLF_TOKEN,
+            query,
 
-                device,
+            extraHeaders: {
+                Origin:
+                    "https://app.wolf.live",
 
-                state:
-                    service
-                        .config
-                        .framework
-                        .login
-                        .onlineState,
+                Referer:
+                    "https://app.wolf.live/mna",
 
-                isAppCheckEnabled:
-                    WOLF_IS_APP_CHECK_ENABLED
-                        ? "true"
-                        : "false",
+                "User-Agent":
+                    chromeUserAgent
+            },
 
-                appCheckToken:
-                    WOLF_IS_APP_CHECK_ENABLED
-                        ? WOLF_APP_CHECK_TOKEN
-                        : undefined
+            transportOptions: {
+                websocket: {
+                    headers: {
+                        Origin:
+                            "https://app.wolf.live",
+
+                        Referer:
+                            "https://app.wolf.live/mna",
+
+                        "User-Agent":
+                            chromeUserAgent
+                    }
+                }
             }
         }
     );
@@ -403,7 +447,7 @@ async function connectWolfSocket() {
         socket;
 
     // ========================================================
-    // إظهار Query الفعلية بدون طباعة التوكن
+    // عرض الإعدادات بدون Secrets
     // ========================================================
 
     console.log(
@@ -415,13 +459,11 @@ async function connectWolfSocket() {
             {
                 host,
                 port,
+
+                path:
+                    "/socket.io",
+
                 device,
-                state:
-                    service
-                        .config
-                        .framework
-                        .login
-                        .onlineState,
 
                 isAppCheckEnabled:
                     WOLF_IS_APP_CHECK_ENABLED
@@ -436,7 +478,13 @@ async function connectWolfSocket() {
                 appCheckToken:
                     WOLF_APP_CHECK_TOKEN
                         ? "[REDACTED]"
-                        : null
+                        : null,
+
+                origin:
+                    "https://app.wolf.live",
+
+                referer:
+                    "https://app.wolf.live/mna"
             },
             null,
             2
@@ -529,7 +577,7 @@ async function connectWolfSocket() {
                 );
 
                 // ------------------------------------------------
-                // إظهار مختصر للبيانات بدون التوكن
+                // Welcome / Error فقط
                 // ------------------------------------------------
 
                 if (
@@ -556,10 +604,10 @@ async function connectWolfSocket() {
                                     )
                                 );
 
-                            // حماية أي توكنات
                             if (
                                 safeData.token
                             ) {
+
                                 safeData.token =
                                     "[REDACTED]";
                             }
@@ -567,6 +615,7 @@ async function connectWolfSocket() {
                             if (
                                 safeData.appCheckToken
                             ) {
+
                                 safeData.appCheckToken =
                                     "[REDACTED]";
                             }
@@ -582,6 +631,7 @@ async function connectWolfSocket() {
                         );
 
                     } catch {
+
                         console.log(
                             "📦 Event data:",
                             data
@@ -615,7 +665,7 @@ async function connectWolfSocket() {
                 );
 
                 // ------------------------------------------------
-                // تحقق من تسجيل الدخول
+                // تحقق من Subscriber
                 // ------------------------------------------------
 
                 if (
@@ -1261,7 +1311,6 @@ async function main() {
                 ? "enabled"
                 : "disabled"
         }`
-
     );
 
     console.log(
