@@ -25,6 +25,17 @@ const CHECK_INTERVAL_MS = 10 * 60 * 1000;
 const MAX_OCCUPANTS_TO_JOIN = 1;
 
 // ============================================================
+// Diagnostics
+// ============================================================
+
+const DEBUG_SOCKET_EVENTS = true;
+const DEBUG_SOCKET_OUTGOING = true;
+const MAX_DEBUG_EVENTS = 100;
+
+let debugEventCount = 0;
+let debugOutgoingCount = 0;
+
+// ============================================================
 // Environment
 // ============================================================
 
@@ -53,6 +64,10 @@ let autoCheckEnabled = true;
 let currentSlotId = null;
 let shuttingDown = false;
 
+let connectionAttempts = 0;
+let connectionCount = 0;
+let disconnectCount = 0;
+
 // ============================================================
 // Helpers
 // ============================================================
@@ -61,6 +76,57 @@ function sleep(ms) {
     return new Promise(resolve => {
         setTimeout(resolve, ms);
     });
+}
+
+function safeJson(value, maxLength = 4000) {
+    try {
+        const seen = new WeakSet();
+
+        const json = JSON.stringify(
+            value,
+            (key, val) => {
+                if (
+                    key === "token" ||
+                    key === "v3APIToken" ||
+                    key === "appCheckToken" ||
+                    key === "deviceToken" ||
+                    key === "authorization" ||
+                    key === "Authorization"
+                ) {
+                    return "[REDACTED]";
+                }
+
+                if (
+                    typeof val === "object" &&
+                    val !== null
+                ) {
+                    if (seen.has(val)) {
+                        return "[Circular]";
+                    }
+
+                    seen.add(val);
+                }
+
+                return val;
+            }
+        );
+
+        if (!json) {
+            return String(value);
+        }
+
+        if (json.length > maxLength) {
+            return (
+                json.slice(0, maxLength) +
+                "... [truncated]"
+            );
+        }
+
+        return json;
+
+    } catch (error) {
+        return `[Unable to serialize: ${error?.message || error}]`;
+    }
 }
 
 function getSubscriberId(source) {
@@ -88,7 +154,9 @@ function getMessageText(source) {
 // ============================================================
 
 function createService() {
-    console.log("⚙️ Creating WOLF service...");
+    console.log(
+        "⚙️ Creating WOLF service..."
+    );
 
     service = new WOLF();
 
@@ -103,7 +171,9 @@ function createService() {
             WOLF_APP_CHECK_TOKEN;
     }
 
-    console.log("⚙️ WOLF service created.");
+    console.log(
+        "⚙️ WOLF service created."
+    );
 }
 
 // ============================================================
@@ -111,11 +181,14 @@ function createService() {
 // ============================================================
 
 async function initializeHandlers() {
-    console.log("⚙️ Initializing service handlers...");
+    console.log(
+        "⚙️ Initializing service handlers..."
+    );
 
     if (
         !service?.websocket ||
-        typeof service.websocket.init !== "function"
+        typeof service.websocket.init !==
+            "function"
     ) {
         throw new Error(
             "WOLF websocket API is not available."
@@ -203,6 +276,171 @@ function setupCommandListener() {
 }
 
 // ============================================================
+// Socket diagnostics
+// ============================================================
+
+function installSocketDiagnostics() {
+    if (!socket) {
+        return;
+    }
+
+    // --------------------------------------------------------
+    // Engine.IO diagnostics
+    // --------------------------------------------------------
+
+    socket.io.on(
+        "open",
+        () => {
+            console.log(
+                "🟢 Engine.IO: OPEN"
+            );
+        }
+    );
+
+    socket.io.on(
+        "close",
+        reason => {
+            console.log(
+                `🔴 Engine.IO: CLOSE`
+            );
+
+            console.log(
+                `🔴 Engine.IO close reason: ${reason}`
+            );
+        }
+    );
+
+    socket.io.on(
+        "error",
+        error => {
+            console.error(
+                "❌ Engine.IO error:",
+                error?.message ||
+                safeJson(error)
+            );
+        }
+    );
+
+    socket.io.on(
+        "ping",
+        () => {
+            console.log(
+                "💓 Engine.IO: PING"
+            );
+        }
+    );
+
+    socket.io.on(
+        "packet",
+        packet => {
+            if (!DEBUG_SOCKET_EVENTS) {
+                return;
+            }
+
+            console.log(
+                `📦 Engine packet: type=${packet?.type}`
+            );
+        }
+    );
+
+    // --------------------------------------------------------
+    // Socket.IO incoming events
+    // --------------------------------------------------------
+
+    socket.onAny(
+        async (
+            eventName,
+            data
+        ) => {
+
+            if (
+                DEBUG_SOCKET_EVENTS &&
+                debugEventCount <
+                    MAX_DEBUG_EVENTS
+            ) {
+                debugEventCount++;
+
+                console.log(
+                    "📥 SOCKET EVENT"
+                );
+
+                console.log(
+                    `   Event: ${eventName}`
+                );
+
+                console.log(
+                    `   Data: ${safeJson(data)}`
+                );
+            }
+
+            try {
+                const handlers =
+                    service.websocket.handlers ||
+                    {};
+
+                const handler =
+                    handlers[eventName];
+
+                if (
+                    !handler ||
+                    typeof handler.process !==
+                        "function"
+                ) {
+                    return;
+                }
+
+                await handler.process(
+                    data?.body ?? data
+                );
+
+            } catch (error) {
+                console.error(
+                    `❌ Handler error [${eventName}]:`,
+                    error
+                );
+            }
+        }
+    );
+
+    // --------------------------------------------------------
+    // Socket.IO outgoing events
+    // --------------------------------------------------------
+
+    if (
+        DEBUG_SOCKET_OUTGOING
+    ) {
+        socket.onAnyOutgoing(
+            (
+                eventName,
+                ...args
+            ) => {
+
+                if (
+                    debugOutgoingCount >=
+                    MAX_DEBUG_EVENTS
+                ) {
+                    return;
+                }
+
+                debugOutgoingCount++;
+
+                console.log(
+                    "📤 SOCKET OUTGOING"
+                );
+
+                console.log(
+                    `   Event: ${eventName}`
+                );
+
+                console.log(
+                    `   Data: ${safeJson(args)}`
+                );
+            }
+        );
+    }
+}
+
+// ============================================================
 // Socket.IO connection
 // ============================================================
 
@@ -229,8 +467,8 @@ async function connectService() {
         connection.port ?? 443;
 
     // IMPORTANT:
-    // Do NOT use connection.query.device here.
-    // Force the device configured by the environment.
+    // Do not use connection.query.device.
+    // Force the environment device.
     const device =
         WOLF_DEVICE || "web";
 
@@ -254,9 +492,42 @@ async function connectService() {
         }`
     );
 
+    console.log(
+        `🔐 Token loaded: ${
+            WOLF_TOKEN
+                ? "yes"
+                : "no"
+        }`
+    );
+
+    console.log(
+        `🔐 Token length: ${
+            WOLF_TOKEN
+                ? WOLF_TOKEN.length
+                : 0
+        }`
+    );
+
+    console.log(
+        `🛡️ App Check token loaded: ${
+            WOLF_APP_CHECK_TOKEN
+                ? "yes"
+                : "no"
+        }`
+    );
+
+    console.log(
+        `⚙️ Connection version: ${
+            connection.version ||
+            "not specified"
+        }`
+    );
+
     const socketQuery = {
         token: WOLF_TOKEN,
+
         device,
+
         state:
             service.config.framework.login.onlineState,
 
@@ -278,6 +549,15 @@ async function connectService() {
             WOLF_APP_CHECK_TOKEN;
     }
 
+    // Safe query logging
+    console.log(
+        "🔎 Socket query:"
+    );
+
+    console.log(
+        safeJson(socketQuery)
+    );
+
     socket = io(
         `${host}:${port}`,
         {
@@ -287,26 +567,40 @@ async function connectService() {
 
             reconnection: true,
 
-            reconnectionAttempts: Infinity,
+            reconnectionAttempts:
+                Infinity,
 
-            reconnectionDelay: 2000,
+            reconnectionDelay:
+                2000,
 
-            reconnectionDelayMax: 10000,
+            reconnectionDelayMax:
+                10000,
 
-            timeout: 20000,
+            timeout:
+                20000,
 
-            autoConnect: false,
+            autoConnect:
+                false,
 
-            query: socketQuery
+            query:
+                socketQuery
         }
     );
 
     service.websocket.socket =
         socket;
 
+    installSocketDiagnostics();
+
+    // --------------------------------------------------------
+    // Connect
+    // --------------------------------------------------------
+
     socket.on(
         "connect",
         () => {
+            connectionCount++;
+
             console.log(
                 "========================================"
             );
@@ -320,76 +614,180 @@ async function connectService() {
             );
 
             console.log(
+                `🔗 Connection count: ${connectionCount}`
+            );
+
+            console.log(
+                `🔗 Socket connected: ${socket.connected}`
+            );
+
+            console.log(
+                `🔗 Transport: ${
+                    socket.io?.engine?.transport?.name ||
+                    "unknown"
+                }`
+            );
+
+            console.log(
                 "========================================"
             );
         }
     );
 
+    // --------------------------------------------------------
+    // Connect error
+    // --------------------------------------------------------
+
     socket.on(
         "connect_error",
         error => {
             console.error(
-                "❌ Socket connection error:",
-                error?.message ||
-                error
+                "========================================"
+            );
+
+            console.error(
+                "❌ SOCKET CONNECT ERROR"
+            );
+
+            console.error(
+                `❌ Message: ${
+                    error?.message ||
+                    "unknown"
+                }`
+            );
+
+            console.error(
+                `❌ Name: ${
+                    error?.name ||
+                    "unknown"
+                }`
+            );
+
+            console.error(
+                `❌ Description: ${
+                    error?.description ||
+                    "none"
+                }`
+            );
+
+            console.error(
+                `❌ Context: ${
+                    safeJson(
+                        error?.context
+                    )
+                }`
+            );
+
+            console.error(
+                `❌ Data: ${
+                    safeJson(
+                        error?.data
+                    )
+                }`
+            );
+
+            console.error(
+                `❌ Stack: ${
+                    error?.stack ||
+                    "none"
+                }`
+            );
+
+            console.error(
+                "========================================"
             );
         }
     );
 
+    // --------------------------------------------------------
+    // Disconnect
+    // --------------------------------------------------------
+
     socket.on(
         "disconnect",
-        reason => {
-            console.log(
-                `🔌 Connection closed: ${reason}`
+        (
+            reason,
+            details
+        ) => {
+            disconnectCount++;
+
+            console.error(
+                "========================================"
+            );
+
+            console.error(
+                "🔴 SOCKET DISCONNECTED"
+            );
+
+            console.error(
+                `🔴 Reason: ${reason}`
+            );
+
+            console.error(
+                `🔴 Disconnect count: ${disconnectCount}`
+            );
+
+            console.error(
+                `🔴 Socket connected: ${socket.connected}`
+            );
+
+            console.error(
+                `🔴 Details: ${safeJson(details)}`
+            );
+
+            console.error(
+                `🔴 Engine readyState: ${
+                    socket.io?.engine?.readyState ||
+                    "unknown"
+                }`
+            );
+
+            console.error(
+                `🔴 Engine transport: ${
+                    socket.io?.engine?.transport?.name ||
+                    "unknown"
+                }`
+            );
+
+            console.error(
+                `🔴 Current subscriber: ${
+                    safeJson(
+                        service?.currentSubscriber
+                    )
+                }`
+            );
+
+            console.error(
+                "========================================"
             );
         }
     );
+
+    // --------------------------------------------------------
+    // Generic socket error
+    // --------------------------------------------------------
 
     socket.on(
         "error",
         error => {
             console.error(
-                "❌ Socket error:",
-                error
+                "❌ SOCKET ERROR EVENT:"
+            );
+
+            console.error(
+                safeJson(error)
             );
         }
     );
 
-    // ========================================================
-    // Forward Socket.IO events to wolf.js handlers
-    // ========================================================
+    // --------------------------------------------------------
+    // Connect
+    // --------------------------------------------------------
 
-    socket.onAny(
-        async (
-            eventName,
-            data
-        ) => {
-            try {
-                const handlers =
-                    service.websocket.handlers || {};
+    connectionAttempts++;
 
-                const handler =
-                    handlers[eventName];
-
-                if (
-                    !handler ||
-                    typeof handler.process !==
-                        "function"
-                ) {
-                    return;
-                }
-
-                await handler.process(
-                    data?.body ?? data
-                );
-
-            } catch (error) {
-                console.error(
-                    `❌ Handler error [${eventName}]:`,
-                    error
-                );
-            }
-        }
+    console.log(
+        `🔄 Connection attempt: ${connectionAttempts}`
     );
 
     console.log(
@@ -411,12 +809,18 @@ async function waitForAuthorization() {
     );
 
     const timeout =
-        Date.now() + 60 * 1000;
+        Date.now() +
+        60 * 1000;
 
-    let lastSubscriberId = null;
+    let lastSubscriberId =
+        null;
+
+    let lastStateLog =
+        0;
 
     while (
-        Date.now() < timeout
+        Date.now() <
+        timeout
     ) {
         try {
             const subscriber =
@@ -438,7 +842,15 @@ async function waitForAuthorization() {
                         id;
 
                     console.log(
-                        `👤 Authorized subscriber ID: ${id}`
+                        "========================================"
+                    );
+
+                    console.log(
+                        "🟢 WOLF AUTHORIZATION DETECTED"
+                    );
+
+                    console.log(
+                        `👤 ID: ${id}`
                     );
 
                     console.log(
@@ -455,9 +867,31 @@ async function waitForAuthorization() {
                             "unknown"
                         }`
                     );
+
+                    console.log(
+                        "========================================"
+                    );
                 }
 
                 return true;
+            }
+
+            // Periodic status
+            if (
+                Date.now() -
+                    lastStateLog >
+                5000
+            ) {
+                lastStateLog =
+                    Date.now();
+
+                console.log(
+                    `⏳ Still waiting... socket.connected=${socket?.connected}, subscriber=${
+                        service?.currentSubscriber
+                            ? "present"
+                            : "missing"
+                    }`
+                );
             }
 
         } catch (error) {
@@ -469,6 +903,39 @@ async function waitForAuthorization() {
 
         await sleep(1000);
     }
+
+    console.error(
+        "========================================"
+    );
+
+    console.error(
+        "❌ AUTHORIZATION TIMEOUT"
+    );
+
+    console.error(
+        `❌ Socket connected: ${
+            socket?.connected
+        }`
+    );
+
+    console.error(
+        `❌ Socket ID: ${
+            socket?.id ||
+            "none"
+        }`
+    );
+
+    console.error(
+        `❌ Current subscriber: ${
+            safeJson(
+                service?.currentSubscriber
+            )
+        }`
+    );
+
+    console.error(
+        "========================================"
+    );
 
     throw new Error(
         "Authorization timeout: WOLF subscriber was not initialized."
@@ -484,9 +951,7 @@ async function verifyStageAPI() {
         "🎙️ Verifying Stage API..."
     );
 
-    if (
-        !service?.stage
-    ) {
+    if (!service?.stage) {
         throw new Error(
             "service.stage is not available."
         );
@@ -504,7 +969,7 @@ async function verifyStageAPI() {
     if (
         !service.stage.slot ||
         typeof service.stage.slot.list !==
-        "function"
+            "function"
     ) {
         throw new Error(
             "service.stage.slot.list() is not available."
@@ -567,9 +1032,7 @@ function findCurrentSlot(
             service?.currentSubscriber?.id
         );
 
-    if (
-        !currentSubscriberId
-    ) {
+    if (!currentSubscriberId) {
         return null;
     }
 
@@ -663,7 +1126,8 @@ async function checkStage() {
         currentSlotId =
             freeSlot.id;
 
-        autoCheckEnabled = false;
+        autoCheckEnabled =
+            false;
 
         stopMonitoring();
 
@@ -705,7 +1169,8 @@ async function forceJoinStage() {
             currentSlotId =
                 currentSlot.id;
 
-            autoCheckEnabled = false;
+            autoCheckEnabled =
+                false;
 
             stopMonitoring();
 
@@ -744,7 +1209,8 @@ async function forceJoinStage() {
         currentSlotId =
             freeSlot.id;
 
-        autoCheckEnabled = false;
+        autoCheckEnabled =
+            false;
 
         stopMonitoring();
 
@@ -775,7 +1241,8 @@ async function leaveStage() {
                 "ℹ️ Bot is not currently on Stage."
             );
 
-            autoCheckEnabled = false;
+            autoCheckEnabled =
+                false;
 
             stopMonitoring();
 
@@ -876,7 +1343,8 @@ async function shutdown(
         return;
     }
 
-    shuttingDown = true;
+    shuttingDown =
+        true;
 
     console.log(
         `🛑 Shutdown requested: ${signal}`
@@ -987,6 +1455,10 @@ async function main() {
         "✅ Session initialized"
     );
 
+    console.log(
+        `🔐 Session token length: ${WOLF_TOKEN.length}`
+    );
+
     createService();
 
     await initializeHandlers();
@@ -1045,11 +1517,25 @@ async function main() {
 main().catch(
     async error => {
         console.error(
-            "❌ Fatal error:"
+            "========================================"
         );
 
         console.error(
+            "❌ FATAL ERROR"
+        );
+
+        console.error(
+            error?.message ||
             error
+        );
+
+        console.error(
+            error?.stack ||
+            ""
+        );
+
+        console.error(
+            "========================================"
         );
 
         try {
