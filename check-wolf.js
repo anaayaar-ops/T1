@@ -39,36 +39,44 @@ let WOLF_IS_APP_CHECK_ENABLED = false;
 
 async function initializeSession() {
     console.log("");
-    console.log("🔐 Loading WOLF credentials from Chrome session...");
+    console.log(
+        "🔐 Loading WOLF credentials from Chrome session..."
+    );
 
     const session = await loadSession();
 
     if (!session) {
         console.error("");
-        console.error("❌ WOLF session was not loaded.");
+        console.error(
+            "❌ WOLF session was not loaded."
+        );
+
         process.exit(1);
     }
 
     if (!session.token) {
         console.error("");
-        console.error("❌ WOLF token was not found in Chrome session.");
+        console.error(
+            "❌ WOLF token was not found in Chrome session."
+        );
+
         process.exit(1);
     }
 
     if (
-        typeof session.isAppCheckEnabled !== "undefined" &&
-        session.isAppCheckEnabled
+        session.isAppCheckEnabled &&
+        !session.appCheckToken
     ) {
-        if (!session.appCheckToken) {
-            console.error("");
-            console.error(
-                "❌ App Check is enabled but appCheckToken was not found."
-            );
-            process.exit(1);
-        }
+        console.error("");
+        console.error(
+            "❌ App Check is enabled but appCheckToken was not found."
+        );
+
+        process.exit(1);
     }
 
-    WOLF_TOKEN = session.token;
+    WOLF_TOKEN =
+        session.token;
 
     WOLF_APP_CHECK_TOKEN =
         session.appCheckToken || "";
@@ -77,9 +85,13 @@ async function initializeSession() {
         session.device || "web";
 
     WOLF_IS_APP_CHECK_ENABLED =
-        Boolean(session.isAppCheckEnabled);
+        Boolean(
+            session.isAppCheckEnabled
+        );
 
-    console.log("✅ WOLF credentials loaded from Chrome session");
+    console.log(
+        "✅ WOLF credentials loaded from Chrome session"
+    );
 
     console.log(
         `🔐 WOLF token length: ${WOLF_TOKEN.length}`
@@ -127,7 +139,9 @@ function sleep(ms) {
 }
 
 function isWatchedSubscriber(id) {
-    return WATCHED_SUBSCRIBER_IDS.includes(Number(id));
+    return WATCHED_SUBSCRIBER_IDS.includes(
+        Number(id)
+    );
 }
 
 // ============================================================
@@ -199,7 +213,11 @@ function setupCommandListener() {
                     return;
                 }
 
-                if (!isWatchedSubscriber(senderId)) {
+                if (
+                    !isWatchedSubscriber(
+                        senderId
+                    )
+                ) {
                     return;
                 }
 
@@ -207,12 +225,16 @@ function setupCommandListener() {
                     `📩 Command received from ${senderId}: ${text}`
                 );
 
-                if (text === LEAVE_COMMAND) {
+                if (
+                    text === LEAVE_COMMAND
+                ) {
                     await leaveStage();
                     return;
                 }
 
-                if (text === JOIN_COMMAND) {
+                if (
+                    text === JOIN_COMMAND
+                ) {
                     await forceJoinStage();
                     return;
                 }
@@ -248,19 +270,32 @@ async function connectService() {
     const port =
         connection?.port ?? 443;
 
+    // ========================================================
+    // IMPORTANT:
+    // استخدم device القادم من session-loader
+    // ولا تستخدم connection.query.device
+    // ========================================================
+
     const device =
-        connection?.query?.device ||
-        WOLF_DEVICE ||
-        "web";
+        WOLF_DEVICE || "web";
 
     console.log("");
+
     console.log(
         "🔌 Starting service connection..."
     );
 
-    console.log(`🌐 Host: ${host}`);
-    console.log(`🔌 Port: ${port}`);
-    console.log(`📱 Device: ${device}`);
+    console.log(
+        `🌐 Host: ${host}`
+    );
+
+    console.log(
+        `🔌 Port: ${port}`
+    );
+
+    console.log(
+        `📱 Device: ${device}`
+    );
 
     console.log(
         `🛡️ Security validation: ${
@@ -273,7 +308,9 @@ async function connectService() {
     socket = io(
         `${host}:${port}`,
         {
-            transports: ["websocket"],
+            transports: [
+                "websocket"
+            ],
 
             reconnection: true,
 
@@ -285,7 +322,10 @@ async function connectService() {
                 device,
 
                 state:
-                    service.config.framework.login.onlineState,
+                    service.config
+                        .framework
+                        .login
+                        .onlineState,
 
                 version:
                     connection?.version ||
@@ -304,26 +344,64 @@ async function connectService() {
         }
     );
 
-    service.websocket.socket = socket;
+    service.websocket.socket =
+        socket;
+
+    // ========================================================
+    // Socket Connected
+    // ========================================================
 
     socket.on(
         "connect",
-        () => {
+        async () => {
             console.log("");
+
             console.log(
                 "========================================"
             );
+
             console.log(
                 "🔗 Service connection established"
             );
+
             console.log(
                 `🔗 Connection ID: ${socket.id}`
             );
+
             console.log(
                 "========================================"
             );
+
+            // ==================================================
+            // START STAGE IMMEDIATELY
+            // لا تنتظر Authorization
+            // ==================================================
+
+            try {
+                console.log(
+                    "🎙️ Starting Stage check immediately..."
+                );
+
+                await verifyStageAPI();
+
+                await checkStage();
+
+                if (!currentSlotId) {
+                    startMonitoring();
+                }
+
+            } catch (error) {
+                console.error(
+                    "❌ Immediate Stage check error:",
+                    error?.message || error
+                );
+            }
         }
     );
+
+    // ========================================================
+    // Connection Error
+    // ========================================================
 
     socket.on(
         "connect_error",
@@ -335,6 +413,10 @@ async function connectService() {
         }
     );
 
+    // ========================================================
+    // Disconnect
+    // ========================================================
+
     socket.on(
         "disconnect",
         reason => {
@@ -344,12 +426,21 @@ async function connectService() {
         }
     );
 
+    // ========================================================
+    // WOLF Events
+    // ========================================================
+
     socket.onAny(
-        async (eventName, data) => {
+        async (
+            eventName,
+            data
+        ) => {
             try {
                 const handler =
                     service.websocket
-                        .handlers?.[eventName];
+                        .handlers?.[
+                            eventName
+                        ];
 
                 if (!handler) {
                     return;
@@ -374,62 +465,12 @@ async function connectService() {
 
     socket.connect();
 
-    await waitForAuthorization();
-}
+    // ========================================================
+    // IMPORTANT:
+    // لا يوجد waitForAuthorization()
+    // ========================================================
 
-// ============================================================
-// Wait For Authorization
-// ============================================================
-
-async function waitForAuthorization(
-    timeout = 60000
-) {
-    const start = Date.now();
-
-    console.log(
-        "⏳ Waiting for authorization..."
-    );
-
-    while (
-        Date.now() - start < timeout
-    ) {
-        if (service.currentSubscriber?.id) {
-            console.log("");
-            console.log(
-                "========================================"
-            );
-
-            console.log(
-                "✅ Authorization complete"
-            );
-
-            console.log(
-                `👤 Account: ${
-                    service.currentSubscriber.username ||
-                    service.currentSubscriber.nickname ||
-                    "Unknown"
-                }`
-            );
-
-            console.log(
-                `🆔 Account ID: ${
-                    service.currentSubscriber.id
-                }`
-            );
-
-            console.log(
-                "========================================"
-            );
-
-            return;
-        }
-
-        await sleep(500);
-    }
-
-    throw new Error(
-        "Authorization timeout"
-    );
+    return;
 }
 
 // ============================================================
@@ -492,7 +533,8 @@ async function checkStage() {
 
         const occupiedSlots =
             slots.filter(
-                slot => !!slot?.occupierId
+                slot =>
+                    !!slot?.occupierId
             );
 
         console.log(
@@ -512,7 +554,8 @@ async function checkStage() {
 
         const freeSlot =
             slots.find(
-                slot => !slot?.occupierId
+                slot =>
+                    !slot?.occupierId
             );
 
         if (!freeSlot) {
@@ -539,7 +582,8 @@ async function checkStage() {
             `✅ Joined successfully: slot ${currentSlotId}`
         );
 
-        autoCheckEnabled = false;
+        autoCheckEnabled =
+            false;
 
         stopMonitoring();
 
@@ -574,7 +618,8 @@ async function forceJoinStage() {
 
         const freeSlot =
             slots.find(
-                slot => !slot?.occupierId
+                slot =>
+                    !slot?.occupierId
             );
 
         if (!freeSlot) {
@@ -601,7 +646,8 @@ async function forceJoinStage() {
             `✅ Joined successfully: slot ${currentSlotId}`
         );
 
-        autoCheckEnabled = false;
+        autoCheckEnabled =
+            false;
 
         stopMonitoring();
 
@@ -652,7 +698,9 @@ async function leaveStage() {
     }
 
     currentSlotId = null;
-    autoCheckEnabled = false;
+
+    autoCheckEnabled =
+        false;
 
     stopMonitoring();
 
@@ -704,14 +752,18 @@ function stopMonitoring() {
 // Shutdown
 // ============================================================
 
-async function shutdown(signal) {
+async function shutdown(
+    signal
+) {
     if (shuttingDown) {
         return;
     }
 
-    shuttingDown = true;
+    shuttingDown =
+        true;
 
     console.log("");
+
     console.log(
         "========================================"
     );
@@ -741,6 +793,7 @@ async function shutdown(signal) {
                 "✅ Slot released"
             );
         }
+
     } catch (error) {
         console.error(
             "❌ Failed to release slot:",
@@ -799,7 +852,7 @@ async function main() {
     );
 
     // ========================================================
-    // Load WOLF credentials from session
+    // Load credentials from Chrome session
     // ========================================================
 
     await initializeSession();
@@ -817,34 +870,47 @@ async function main() {
     );
 
     // ========================================================
-    // Create and connect service
+    // Create Service
     // ========================================================
 
     createService();
 
+    // ========================================================
+    // Initialize wolf.js
+    // ========================================================
+
     await initializeHandlers();
+
+    // ========================================================
+    // Private Commands
+    // ========================================================
 
     setupCommandListener();
 
+    // ========================================================
+    // Connect
+    // ========================================================
+
     await connectService();
 
-    await verifyStageAPI();
+    // ========================================================
+    // لا يوجد انتظار Authorization
+    // ولا يوجد checkStage هنا
+    //
+    // لأن connectService() يقوم بالفحص
+    // مباشرة داخل socket "connect"
+    // ========================================================
 
     console.log(
-        "🟢 Authorization successful."
+        "🟢 Socket connection started."
     );
 
     console.log(
-        "👻 Presence set to Invisible."
+        "👻 Presence configured as Invisible."
     );
-
-    await checkStage();
-
-    if (!currentSlotId) {
-        startMonitoring();
-    }
 
     console.log("");
+
     console.log(
         "========================================"
     );
@@ -877,6 +943,7 @@ async function main() {
 main().catch(
     async error => {
         console.error("");
+
         console.error(
             "❌ FATAL ERROR"
         );
