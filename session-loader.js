@@ -1,4 +1,3 @@
-```js
 import { chromium } from "playwright";
 import fs from "fs";
 import path from "path";
@@ -390,21 +389,3 @@ export async function loadSession() {
         throw error;
     }
 }
-```
-
-### الناتج من `loadSession()`
-
-سيكون **بالضبط** بهذا الشكل:
-
-```js
-{
-    device: "web",
-    isAppCheckEnabled: true,
-    token: "WE-...",
-    appCheckToken: "eyJ..."
-}
-```
-
-ولا يتم استخراج أو إرجاع `deviceToken` إطلاقًا، ولا يتم طباعة أي من التوكنات في الـ GitHub Actions logs.
-
-**مهم:** إذا كان `check-wolf.js` الحالي عندك ما زال ينتظر `session.v3APIToken` و`session.appCheckToken`، لازم نعدله أيضًا ليستخدم الأسماء الجديدة `session.token` و`session.appCheckToken`.
