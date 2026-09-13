@@ -36,7 +36,7 @@ let WOLF_DEVICE =
 
 let WOLF_IS_APP_CHECK_ENABLED =
     String(
-        process.env.WOLF_IS_APP_CHECK_ENABLED
+        process.env.WOLF_IS_APP_CHECK_ENABLED || "true"
     ).toLowerCase() === "true";
 
 // ============================================================
@@ -98,17 +98,32 @@ async function initializeSession() {
         );
     }
 
-    if (!session.v3APIToken) {
+    // ========================================================
+    // session-loader.js يرجع:
+    //
+    // device
+    // isAppCheckEnabled
+    // token
+    // appCheckToken
+    // ========================================================
+
+    if (!session.token) {
         throw new Error(
-            "WOLF v3APIToken غير موجود في session"
+            "WOLF token غير موجود في session"
+        );
+    }
+
+    if (!session.appCheckToken) {
+        throw new Error(
+            "WOLF App Check token غير موجود في session"
         );
     }
 
     WOLF_TOKEN =
-        session.v3APIToken;
+        session.token;
 
     WOLF_APP_CHECK_TOKEN =
-        session.appCheckToken || "";
+        session.appCheckToken;
 
     if (session.device) {
         WOLF_DEVICE =
@@ -119,10 +134,11 @@ async function initializeSession() {
         typeof session.isAppCheckEnabled !==
         "undefined"
     ) {
+
         WOLF_IS_APP_CHECK_ENABLED =
-            String(
+            Boolean(
                 session.isAppCheckEnabled
-            ).toLowerCase() === "true";
+            );
     }
 
     console.log(
@@ -171,6 +187,7 @@ function createWolfService() {
         OnlineState.INVISIBLE;
 
     if (WOLF_APP_CHECK_TOKEN) {
+
         service.config.framework.login.appCheckToken =
             WOLF_APP_CHECK_TOKEN;
     }
@@ -281,10 +298,6 @@ function setupPrivateCommandListener() {
 
 async function connectWolfSocket() {
 
-    // ========================================================
-    // نفس Host الذي تستخدمه Chrome
-    // ========================================================
-
     const host =
         "https://v3.palringo.com";
 
@@ -292,10 +305,6 @@ async function connectWolfSocket() {
 
     const device =
         WOLF_DEVICE || "web";
-
-    // ========================================================
-    // Chrome-like headers
-    // ========================================================
 
     const chromeUserAgent =
         "Mozilla/5.0 (X11; Linux x86_64) " +
@@ -368,11 +377,7 @@ async function connectWolfSocket() {
     );
 
     // ========================================================
-    // مهم جدًا:
-    //
-    // Chrome Socket URL الذي التقطناه لا يحتوي state.
-    //
-    // لذلك لا نرسل state هنا.
+    // Socket query
     // ========================================================
 
     const query = {
@@ -577,7 +582,7 @@ async function connectWolfSocket() {
                 );
 
                 // ------------------------------------------------
-                // Welcome / Error فقط
+                // Welcome / Error
                 // ------------------------------------------------
 
                 if (
