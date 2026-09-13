@@ -1,5 +1,6 @@
 import wolfjs from "wolf.js";
 import { io } from "socket.io-client";
+import { loadSession } from "./session-loader.js";
 
 const { WOLF, OnlineState } = wolfjs;
 
@@ -24,46 +25,14 @@ const CHECK_INTERVAL_MS = 10 * 60 * 1000;
 const MAX_OCCUPANTS_TO_JOIN = 1;
 
 // ============================================================
-// Environment Configuration
+// Runtime Credentials
 // ============================================================
 
-const WOLF_TOKEN = process.env.WOLF_TOKEN;
+let WOLF_TOKEN = "";
+let WOLF_APP_CHECK_TOKEN = "";
 
-const WOLF_APP_CHECK_TOKEN =
-    process.env.WOLF_APP_CHECK_TOKEN || "";
-
-const WOLF_DEVICE =
-    process.env.WOLF_DEVICE || "web";
-
-const WOLF_IS_APP_CHECK_ENABLED =
-    String(
-        process.env.WOLF_IS_APP_CHECK_ENABLED ?? "false"
-    ).toLowerCase() === "true";
-
-// ============================================================
-// Validate Environment
-// ============================================================
-
-if (!WOLF_TOKEN) {
-    console.error("");
-    console.error("❌ WOLF_TOKEN is missing");
-    console.error(
-        "Add WOLF_TOKEN to GitHub Actions Secrets."
-    );
-    process.exit(1);
-}
-
-if (
-    WOLF_IS_APP_CHECK_ENABLED &&
-    !WOLF_APP_CHECK_TOKEN
-) {
-    console.error("");
-    console.error("❌ WOLF_APP_CHECK_TOKEN is missing");
-    console.error(
-        "App Check is enabled but no token was supplied."
-    );
-    process.exit(1);
-}
+let WOLF_DEVICE = "web";
+let WOLF_IS_APP_CHECK_ENABLED = true;
 
 // ============================================================
 // Runtime Variables
@@ -92,10 +61,90 @@ function isWatchedSubscriber(id) {
 }
 
 // ============================================================
+// Load WOLF Session
+// ============================================================
+
+async function initializeSession() {
+    console.log("");
+    console.log("========================================");
+    console.log("🔐 Loading WOLF session from Chrome");
+    console.log("========================================");
+
+    const session = await loadSession();
+
+    if (!session) {
+        throw new Error(
+            "لم يتم الحصول على WOLF session"
+        );
+    }
+
+    if (!session.token) {
+        throw new Error(
+            "WOLF token غير موجود في جلسة Chrome"
+        );
+    }
+
+    if (!session.appCheckToken) {
+        throw new Error(
+            "WOLF App Check token غير موجود في جلسة Chrome"
+        );
+    }
+
+    WOLF_TOKEN = session.token;
+    WOLF_APP_CHECK_TOKEN = session.appCheckToken;
+
+    if (session.device) {
+        WOLF_DEVICE = session.device;
+    }
+
+    if (
+        typeof session.isAppCheckEnabled !==
+        "undefined"
+    ) {
+        WOLF_IS_APP_CHECK_ENABLED =
+            Boolean(
+                session.isAppCheckEnabled
+            );
+    }
+
+    console.log(
+        "✅ WOLF credentials loaded from Chrome session"
+    );
+
+    console.log(
+        `🔐 WOLF token length: ${WOLF_TOKEN.length}`
+    );
+
+    console.log(
+        `📱 Device: ${WOLF_DEVICE}`
+    );
+
+    console.log(
+        `🛡️ App Check: ${
+            WOLF_IS_APP_CHECK_ENABLED
+                ? "enabled"
+                : "disabled"
+        }`
+    );
+
+    console.log(
+        `🛡️ App Check token length: ${WOLF_APP_CHECK_TOKEN.length}`
+    );
+
+    console.log(
+        "========================================"
+    );
+}
+
+// ============================================================
 // Create Service
 // ============================================================
 
 function createService() {
+    console.log(
+        "⚙️ Creating WOLF service..."
+    );
+
     service = new WOLF();
 
     service.config.framework.login.token =
@@ -109,6 +158,10 @@ function createService() {
             WOLF_APP_CHECK_TOKEN;
     }
 
+    console.log(
+        "⚙️ WOLF service created."
+    );
+
     return service;
 }
 
@@ -118,7 +171,7 @@ function createService() {
 
 async function initializeHandlers() {
     console.log(
-        "⚙️ Initializing service handlers..."
+        "⚙️ Initializing wolf.js handlers..."
     );
 
     await service.websocket.init();
@@ -129,7 +182,7 @@ async function initializeHandlers() {
         ).length;
 
     console.log(
-        `⚙️ Loaded ${handlerCount} handlers`
+        `⚙️ Loaded ${handlerCount} socket handlers`
     );
 }
 
@@ -160,7 +213,11 @@ function setupCommandListener() {
                     return;
                 }
 
-                if (!isWatchedSubscriber(senderId)) {
+                if (
+                    !isWatchedSubscriber(
+                        senderId
+                    )
+                ) {
                     return;
                 }
 
@@ -168,12 +225,16 @@ function setupCommandListener() {
                     `📩 Command received from ${senderId}: ${text}`
                 );
 
-                if (text === LEAVE_COMMAND) {
+                if (
+                    text === LEAVE_COMMAND
+                ) {
                     await leaveStage();
                     return;
                 }
 
-                if (text === JOIN_COMMAND) {
+                if (
+                    text === JOIN_COMMAND
+                ) {
                     await forceJoinStage();
                     return;
                 }
@@ -219,9 +280,17 @@ async function connectService() {
         "🔌 Starting service connection..."
     );
 
-    console.log(`🌐 Host: ${host}`);
-    console.log(`🔌 Port: ${port}`);
-    console.log(`📱 Device: ${device}`);
+    console.log(
+        `🌐 Host: ${host}`
+    );
+
+    console.log(
+        `🔌 Port: ${port}`
+    );
+
+    console.log(
+        `📱 Device: ${device}`
+    );
 
     console.log(
         `🛡️ Security validation: ${
@@ -246,7 +315,10 @@ async function connectService() {
                 device,
 
                 state:
-                    service.config.framework.login.onlineState,
+                    service.config
+                        .framework
+                        .login
+                        .onlineState,
 
                 version:
                     connection?.version ||
@@ -265,7 +337,8 @@ async function connectService() {
         }
     );
 
-    service.websocket.socket = socket;
+    service.websocket.socket =
+        socket;
 
     socket.on(
         "connect",
@@ -274,12 +347,15 @@ async function connectService() {
             console.log(
                 "========================================"
             );
+
             console.log(
                 "🔗 Service connection established"
             );
+
             console.log(
                 `🔗 Connection ID: ${socket.id}`
             );
+
             console.log(
                 "========================================"
             );
@@ -354,7 +430,9 @@ async function waitForAuthorization(
     while (
         Date.now() - start < timeout
     ) {
-        if (service.currentSubscriber?.id) {
+        if (
+            service.currentSubscriber?.id
+        ) {
             console.log("");
             console.log(
                 "========================================"
@@ -453,7 +531,8 @@ async function checkStage() {
 
         const occupiedSlots =
             slots.filter(
-                slot => !!slot?.occupierId
+                slot =>
+                    !!slot?.occupierId
             );
 
         console.log(
@@ -473,7 +552,8 @@ async function checkStage() {
 
         const freeSlot =
             slots.find(
-                slot => !slot?.occupierId
+                slot =>
+                    !slot?.occupierId
             );
 
         if (!freeSlot) {
@@ -535,7 +615,8 @@ async function forceJoinStage() {
 
         const freeSlot =
             slots.find(
-                slot => !slot?.occupierId
+                slot =>
+                    !slot?.occupierId
             );
 
         if (!freeSlot) {
@@ -752,24 +833,15 @@ async function main() {
     );
 
     console.log(
-        "🔐 Loading credentials"
+        "🔐 Loading Chrome session..."
     );
 
     console.log(
         "========================================"
     );
 
-    console.log(
-        `📱 Device: ${WOLF_DEVICE}`
-    );
-
-    console.log(
-        `🛡️ App Check: ${
-            WOLF_IS_APP_CHECK_ENABLED
-                ? "enabled"
-                : "disabled"
-        }`
-    );
+    // تحميل القيم الأربع من جلسة Chrome
+    await initializeSession();
 
     createService();
 
