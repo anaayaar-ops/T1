@@ -1,6 +1,4 @@
 import wolfjs from "wolf.js";
-import { io } from "socket.io-client";
-import WebSocket from "ws";
 import { loadSession } from "./session-loader.js";
 
 const { WOLF, OnlineState } = wolfjs;
@@ -46,16 +44,8 @@ let shuttingDown = false;
 // Helpers
 // ============================================================
 
-function sleep(ms) {
-    return new Promise(resolve => {
-        setTimeout(resolve, ms);
-    });
-}
-
 function isWatchedSubscriber(id) {
-    return WATCHED_SUBSCRIBER_IDS.includes(
-        Number(id)
-    );
+    return WATCHED_SUBSCRIBER_IDS.includes(Number(id));
 }
 
 // ============================================================
@@ -71,140 +61,46 @@ async function loadWolfCredentials() {
     const session = await loadSession();
 
     if (!session) {
-        throw new Error(
-            "❌ loadSession() لم يرجع Session"
-        );
+        throw new Error("❌ loadSession() لم يرجع Session");
     }
 
-    // ========================================================
-    // طباعة القيم المستلمة من session-loader
-    // ========================================================
+    WOLF_TOKEN = session.token;
+    WOLF_APP_CHECK_TOKEN = session.appCheckToken;
+    WOLF_DEVICE = session.device || "web";
+    WOLF_IS_APP_CHECK_ENABLED = Boolean(
+        session.isAppCheckEnabled
+    );
 
     console.log("");
-    console.log("========================================");
-    console.log("🔎 القيم المستلمة من session-loader");
-    console.log("========================================");
-
-    console.log("");
-    console.log("📱 device:");
-    console.log(session.device);
-
-    console.log("");
-    console.log("🛡️ isAppCheckEnabled:");
-    console.log(session.isAppCheckEnabled);
-
-    console.log("");
-    console.log("🔐 token:");
-    console.log(session.token);
-
-    console.log("");
-    console.log("🛡️ appCheckToken:");
-    console.log(session.appCheckToken);
-
-    console.log("");
-    console.log("========================================");
-    console.log("📊 معلومات القيم");
-    console.log("========================================");
-
+    console.log("📊 Session credentials:");
+    console.log(`📱 device: ${WOLF_DEVICE}`);
     console.log(
-        "device type:",
-        typeof session.device
+        `🛡️ App Check: ${
+            WOLF_IS_APP_CHECK_ENABLED
+                ? "enabled"
+                : "disabled"
+        }`
     );
 
     console.log(
-        "isAppCheckEnabled type:",
-        typeof session.isAppCheckEnabled
+        `🔐 token موجود: ${Boolean(WOLF_TOKEN)}`
     );
 
     console.log(
-        "token type:",
-        typeof session.token
+        `🔐 token length: ${WOLF_TOKEN?.length ?? 0}`
     );
 
     console.log(
-        "token length:",
-        session.token?.length ?? 0
+        `🛡️ appCheckToken موجود: ${Boolean(
+            WOLF_APP_CHECK_TOKEN
+        )}`
     );
 
     console.log(
-        "appCheckToken type:",
-        typeof session.appCheckToken
+        `🛡️ appCheckToken length: ${
+            WOLF_APP_CHECK_TOKEN?.length ?? 0
+        }`
     );
-
-    console.log(
-        "appCheckToken length:",
-        session.appCheckToken?.length ?? 0
-    );
-
-    console.log(
-        "========================================"
-    );
-
-    // ========================================================
-    // نقل القيم إلى متغيرات البوت
-    // ========================================================
-
-    WOLF_TOKEN =
-        session.token;
-
-    WOLF_APP_CHECK_TOKEN =
-        session.appCheckToken;
-
-    WOLF_DEVICE =
-        session.device || "web";
-
-    WOLF_IS_APP_CHECK_ENABLED =
-        Boolean(
-            session.isAppCheckEnabled
-        );
-
-    // ========================================================
-    // طباعة القيم بعد نقلها
-    // ========================================================
-
-    console.log("");
-    console.log("========================================");
-    console.log("🔎 القيم بعد نقلها إلى متغيرات البوت");
-    console.log("========================================");
-
-    console.log("");
-    console.log("WOLF_DEVICE:");
-    console.log(WOLF_DEVICE);
-
-    console.log("");
-    console.log("WOLF_IS_APP_CHECK_ENABLED:");
-    console.log(WOLF_IS_APP_CHECK_ENABLED);
-
-    console.log("");
-    console.log("WOLF_TOKEN:");
-    console.log(WOLF_TOKEN);
-
-    console.log("");
-    console.log("WOLF_APP_CHECK_TOKEN:");
-    console.log(WOLF_APP_CHECK_TOKEN);
-
-    console.log("");
-    console.log("========================================");
-    console.log("📊 معلومات المتغيرات");
-    console.log("========================================");
-
-    console.log(
-        "WOLF_TOKEN length:",
-        WOLF_TOKEN?.length ?? 0
-    );
-
-    console.log(
-        "WOLF_APP_CHECK_TOKEN length:",
-        WOLF_APP_CHECK_TOKEN?.length ?? 0
-    );
-
-    console.log(
-        "========================================"
-    );
-
-    // ========================================================
-    // التحقق
-    // ========================================================
 
     if (!WOLF_TOKEN) {
         throw new Error(
@@ -222,7 +118,7 @@ async function loadWolfCredentials() {
     }
 
     console.log(
-        "✅ القيم وصلت وتم تحميلها بنجاح"
+        "✅ تم تحميل WOLF credentials بنجاح"
     );
 }
 
@@ -233,15 +129,34 @@ async function loadWolfCredentials() {
 function createWolfService() {
     service = new WOLF();
 
+    // ========================================================
+    // Token
+    // ========================================================
+
     service.config.framework.login.token =
         WOLF_TOKEN;
+
+    // ========================================================
+    // Online State
+    // ========================================================
 
     service.config.framework.login.onlineState =
         OnlineState.INVISIBLE;
 
-    if (WOLF_APP_CHECK_TOKEN) {
-        service.config.framework.login.appCheckToken =
-            WOLF_APP_CHECK_TOKEN;
+    // ========================================================
+    // Device
+    // ========================================================
+
+    const connection =
+        service._frameworkConfig?.get?.(
+            "connection"
+        );
+
+    if (
+        connection?.query
+    ) {
+        connection.query.device =
+            WOLF_DEVICE;
     }
 
     return service;
@@ -265,6 +180,96 @@ async function initializeWolfHandlers() {
 
     console.log(
         `⚙️ [WOLF] Loaded ${handlerCount} socket handlers`
+    );
+
+    // ========================================================
+    // الحصول على Socket الذي أنشأه wolf.js
+    // ========================================================
+
+    socket =
+        service.websocket.socket;
+
+    if (!socket) {
+        throw new Error(
+            "❌ wolf.js لم ينشئ Socket.IO socket"
+        );
+    }
+
+    // ========================================================
+    // إضافة App Check إلى Query الخاصة بـ wolf.js
+    //
+    // Client.js في wolf.js لا يدعم appCheckToken
+    // بشكل مباشر، لذلك نضيفه قبل socket.connect()
+    // ========================================================
+
+    if (
+        socket.io?.opts?.query
+    ) {
+        socket.io.opts.query.device =
+            WOLF_DEVICE;
+
+        socket.io.opts.query.isAppCheckEnabled =
+            WOLF_IS_APP_CHECK_ENABLED
+                ? "true"
+                : "false";
+
+        if (
+            WOLF_IS_APP_CHECK_ENABLED &&
+            WOLF_APP_CHECK_TOKEN
+        ) {
+            socket.io.opts.query.appCheckToken =
+                WOLF_APP_CHECK_TOKEN;
+        }
+
+        console.log(
+            "🛡️ [WOLF] App Check query configured"
+        );
+    } else {
+        console.warn(
+            "⚠️ [WOLF] Socket.IO query object غير متاح"
+        );
+    }
+
+    // ========================================================
+    // Socket events
+    // ========================================================
+
+    socket.on(
+        "connect",
+        () => {
+            console.log("");
+            console.log(
+                "========================================"
+            );
+            console.log(
+                "🔗 [WOLF] Socket.IO connected"
+            );
+            console.log(
+                `🔗 Socket ID: ${socket.id}`
+            );
+            console.log(
+                "========================================"
+            );
+        }
+    );
+
+    socket.on(
+        "connect_error",
+        error => {
+            console.error(
+                "❌ [WOLF] Socket connect error:",
+                error?.message || error
+            );
+        }
+    );
+
+    socket.on(
+        "disconnect",
+        reason => {
+            console.log(
+                `🔌 [WOLF] Socket disconnected: ${reason}`
+            );
+        }
     );
 }
 
@@ -322,8 +327,7 @@ function setupPrivateCommandListener() {
             } catch (error) {
                 console.error(
                     "❌ privateMessage error:",
-                    error?.message ||
-                    error
+                    error?.message || error
                 );
             }
         }
@@ -335,44 +339,44 @@ function setupPrivateCommandListener() {
 }
 
 // ============================================================
-// Connect WOLF Socket.IO
+// Connect using wolf.js official Websocket
 // ============================================================
 
-async function connectWolfSocket() {
-    const connection =
-        service._frameworkConfig?.get?.(
-            "connection"
-        );
-
-    const host =
-        connection?.host ||
-        "https://v3-rc.palringo.com";
-
-    const port =
-        connection?.port ?? 443;
-
-    const device =
-        WOLF_DEVICE || "web";
-
+async function connectWolf() {
     console.log("");
     console.log(
-        "🔌 تشغيل اتصال WOLF API..."
+        "========================================"
+    );
+    console.log(
+        "🔌 تشغيل اتصال WOLF API"
+    );
+    console.log(
+        "========================================"
     );
 
     console.log(
         "🐺 wolf.js version: 2.7.10"
     );
 
+    const connection =
+        service._frameworkConfig?.get?.(
+            "connection"
+        );
+
     console.log(
-        `🌐 WOLF host: ${host}`
+        `🌐 WOLF host: ${
+            connection?.host || "unknown"
+        }`
     );
 
     console.log(
-        `🔌 WOLF port: ${port}`
+        `🔌 WOLF port: ${
+            connection?.port ?? "unknown"
+        }`
     );
 
     console.log(
-        `📱 Device: ${device}`
+        `📱 Device: ${WOLF_DEVICE}`
     );
 
     console.log(
@@ -383,147 +387,35 @@ async function connectWolfSocket() {
         }`
     );
 
-    // ========================================================
-    // Socket.IO
-    // ========================================================
-
-    socket = io(
-        `${host}:${port}`,
-        {
-            transports: [
-                "websocket"
-            ],
-
-            reconnection: true,
-
-            autoConnect: false,
-
-            query: {
-                token:
-                    WOLF_TOKEN,
-
-                device,
-
-                state:
-                    service.config.framework.login.onlineState,
-
-                version:
-                    connection?.version ||
-                    undefined,
-
-                isAppCheckEnabled:
-                    WOLF_IS_APP_CHECK_ENABLED
-                        ? "true"
-                        : "false",
-
-                appCheckToken:
-                    WOLF_IS_APP_CHECK_ENABLED
-                        ? WOLF_APP_CHECK_TOKEN
-                        : undefined
-            }
-        }
-    );
-
-    service.websocket.socket =
-        socket;
-
-    // ========================================================
-    // Connected
-    // ========================================================
-
-    socket.on(
-        "connect",
-        () => {
-            console.log("");
-
-            console.log(
-                "========================================"
-            );
-
-            console.log(
-                "🔗 [WOLF] Socket.IO connected"
-            );
-
-            console.log(
-                `🔗 Socket ID: ${socket.id}`
-            );
-
-            console.log(
-                "========================================"
-            );
-        }
+    console.log("");
+    console.log(
+        "🔌 [WOLF] الاتصال باستخدام Websocket الداخلي للمكتبة..."
     );
 
     // ========================================================
-    // Connect Error
+    // مهم:
+    //
+    // لا نستخدم io() هنا.
+    //
+    // wolf.js هو المسؤول عن:
+    // - Socket.IO
+    // - handlers
+    // - WELCOME
+    // - LOGIN
+    // - READY
     // ========================================================
 
-    socket.on(
-        "connect_error",
-        error => {
-            console.error(
-                "❌ [WOLF] Socket connect error:",
-                error?.message ||
-                error
-            );
-        }
-    );
-
-    // ========================================================
-    // Disconnect
-    // ========================================================
-
-    socket.on(
-        "disconnect",
-        reason => {
-            console.log(
-                `🔌 [WOLF] Socket disconnected: ${reason}`
-            );
-        }
-    );
-
-    // ========================================================
-    // WOLF Events
-    // ========================================================
-
-    socket.onAny(
-        async (
-            eventName,
-            data
-        ) => {
-            try {
-                const handler =
-                    service.websocket
-                        .handlers?.[
-                            eventName
-                        ];
-
-                if (!handler) {
-                    return;
-                }
-
-                await handler.process(
-                    data?.body ??
-                    data
-                );
-
-            } catch (error) {
-                console.error(
-                    `❌ Handler error [${eventName}]:`,
-                    error?.message ||
-                    error
-                );
-            }
-        }
-    );
+    await service.connect();
 
     console.log(
-        "🔌 [WOLF] Connecting..."
+        "⏳ [WOLF] بانتظار اكتمال WELCOME / LOGIN..."
     );
 
-    socket.connect();
-
     await waitForAuthorization();
+
+    console.log(
+        "✅ [WOLF] اكتمل اتصال WOLF والتفويض"
+    );
 }
 
 // ============================================================
@@ -536,10 +428,6 @@ async function waitForAuthorization(
     const start =
         Date.now();
 
-    console.log(
-        "⏳ [WOLF] Waiting for authorization..."
-    );
-
     while (
         Date.now() - start <
         timeout
@@ -548,7 +436,6 @@ async function waitForAuthorization(
             service.currentSubscriber?.id
         ) {
             console.log("");
-
             console.log(
                 "========================================"
             );
@@ -578,7 +465,10 @@ async function waitForAuthorization(
             return;
         }
 
-        await sleep(500);
+        await new Promise(
+            resolve =>
+                setTimeout(resolve, 500)
+        );
     }
 
     throw new Error(
@@ -707,8 +597,7 @@ async function checkStage() {
     } catch (error) {
         console.error(
             "❌ Stage check error:",
-            error?.message ||
-            error
+            error?.message || error
         );
     }
 }
@@ -772,8 +661,7 @@ async function forceJoinStage() {
     } catch (error) {
         console.error(
             "❌ Force join error:",
-            error?.message ||
-            error
+            error?.message || error
         );
     }
 }
@@ -808,8 +696,7 @@ async function leaveStage() {
     } catch (error) {
         console.error(
             "❌ Leave Stage error:",
-            error?.message ||
-            error
+            error?.message || error
         );
     }
 
@@ -870,9 +757,7 @@ function stopMonitoring() {
 // Shutdown
 // ============================================================
 
-async function shutdown(
-    signal
-) {
+async function shutdown(signal) {
     if (shuttingDown) {
         return;
     }
@@ -881,7 +766,6 @@ async function shutdown(
         true;
 
     console.log("");
-
     console.log(
         "========================================"
     );
@@ -897,11 +781,14 @@ async function shutdown(
     stopMonitoring();
 
     // ========================================================
-    // Leave Stage before shutdown
+    // Leave Stage
     // ========================================================
 
     try {
-        if (currentSlotId) {
+        if (
+            currentSlotId &&
+            service?.stage?.slot
+        ) {
             console.log(
                 `🛑 جاري النزول من Stage قبل الإغلاق — Slot ${currentSlotId}`
             );
@@ -921,23 +808,27 @@ async function shutdown(
     } catch (error) {
         console.error(
             "❌ فشل النزول:",
-            error?.message ||
-            error
+            error?.message || error
         );
     }
 
     // ========================================================
-    // Disconnect Socket
+    // Disconnect through wolf.js
     // ========================================================
 
     try {
-        socket?.disconnect();
+        if (service) {
+            await service.disconnect();
+        }
     } catch (error) {
         console.error(
-            "❌ فشل إغلاق Socket:",
-            error?.message ||
-            error
+            "❌ فشل إغلاق WOLF:",
+            error?.message || error
         );
+
+        try {
+            socket?.disconnect();
+        } catch {}
     }
 
     console.log(
@@ -999,7 +890,7 @@ async function main() {
     createWolfService();
 
     // ========================================================
-    // 3. تهيئة WOLF Handlers
+    // 3. تهيئة WOLF Handlers + Socket
     // ========================================================
 
     await initializeWolfHandlers();
@@ -1011,10 +902,10 @@ async function main() {
     setupPrivateCommandListener();
 
     // ========================================================
-    // 5. الاتصال بـ WOLF
+    // 5. الاتصال الرسمي عن طريق wolf.js
     // ========================================================
 
-    await connectWolfSocket();
+    await connectWolf();
 
     // ========================================================
     // 6. فحص Stage API
@@ -1088,6 +979,10 @@ main().catch(
             error?.message ||
             error
         );
+
+        try {
+            await service?.disconnect();
+        } catch {}
 
         try {
             socket?.disconnect();
