@@ -26,40 +26,48 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Install browser
+      - name: Install Chromium
         run: npx playwright install --with-deps chromium
 
-      - name: Install downloader
+      - name: Install Google Drive downloader
         run: python3 -m pip install --upgrade gdown
 
       - name: Download session
         env:
           WOLF_PROFILE_URL: ${{ secrets.WOLF_PROFILE_URL }}
         run: |
+          set -e
+
           if [ -z "$WOLF_PROFILE_URL" ]; then
-            echo "Session URL is missing."
+            echo "❌ WOLF_PROFILE_URL secret is missing."
             exit 1
           fi
 
-          echo "Downloading session..."
+          echo "📥 Downloading session archive..."
 
           gdown --fuzzy "$WOLF_PROFILE_URL" \
             -O session.zip
 
           if [ ! -s session.zip ]; then
-            echo "Session archive is empty."
+            echo "❌ Session archive is empty."
             exit 1
           fi
 
-          echo "Session downloaded."
+          echo "✅ Session archive downloaded."
+
+          ls -lh session.zip
 
       - name: Start runtime
         env:
           WOLF_PROFILE_ZIP: ${{ github.workspace }}/session.zip
-
           WOLF_DEVICE: web
-
           WOLF_IS_APP_CHECK_ENABLED: "false"
 
         run: |
           node check-wolf.js
+
+      - name: Cleanup session
+        if: always()
+        run: |
+          rm -f session.zip
+          rm -rf "$RUNNER_TEMP/service-session-runtime"
