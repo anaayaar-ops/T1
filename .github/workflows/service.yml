@@ -6,8 +6,10 @@ on:
   schedule:
     - cron: "0 */4 * * *"
 
+
 permissions:
   contents: read
+
 
 jobs:
   runtime:
@@ -15,10 +17,20 @@ jobs:
 
     timeout-minutes: 240
 
+
     steps:
+
+      # ========================================
+      # Checkout
+      # ========================================
 
       - name: Checkout
         uses: actions/checkout@v4
+
+
+      # ========================================
+      # Node.js
+      # ========================================
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -26,18 +38,51 @@ jobs:
           node-version: 24
           cache: npm
 
+
+      # ========================================
+      # Dependencies
+      # ========================================
+
       - name: Install dependencies
         run: npm ci
 
+
+      # ========================================
+      # Chromium
+      # ========================================
+
       - name: Install Chromium
-        run: npx playwright install --with-deps chromium
+        run: |
+          npx playwright install --with-deps chromium
+
+
+      # ========================================
+      # Xvfb
+      # ========================================
+
+      - name: Install Xvfb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+
+
+      # ========================================
+      # Google Drive downloader
+      # ========================================
 
       - name: Install Google Drive downloader
-        run: python3 -m pip install --upgrade gdown
+        run: |
+          python3 -m pip install --upgrade gdown
+
+
+      # ========================================
+      # Download session
+      # ========================================
 
       - name: Download session
         env:
           WOLF_PROFILE_URL: ${{ secrets.WOLF_PROFILE_URL }}
+
         run: |
           set -e
 
@@ -60,17 +105,35 @@ jobs:
 
           ls -lh session.zip
 
+
+      # ========================================
+      # Start runtime
+      # ========================================
+
       - name: Start runtime
         env:
           WOLF_PROFILE_ZIP: ${{ github.workspace }}/session.zip
           WOLF_DEVICE: web
-          WOLF_IS_APP_CHECK_ENABLED: "false"
+          WOLF_IS_APP_CHECK_ENABLED: "true"
 
         run: |
-          node check-wolf.js
+          echo "========================================"
+          echo "🐺 Starting WOLF runtime"
+          echo "========================================"
+
+          xvfb-run -a \
+            --server-args="-screen 0 1365x900x24" \
+            node check-wolf.js
+
+
+      # ========================================
+      # Cleanup
+      # ========================================
 
       - name: Cleanup session
         if: always()
+
         run: |
           rm -f session.zip
           rm -rf "$RUNNER_TEMP/service-session-runtime"
+          rm -rf "$RUNNER_TEMP/wolf-session-runtime"
