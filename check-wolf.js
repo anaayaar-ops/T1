@@ -25,14 +25,84 @@ const CHECK_INTERVAL_MS = 10 * 60 * 1000;
 const MAX_OCCUPANTS_TO_JOIN = 1;
 
 // ============================================================
-// Runtime Credentials
+// Session Configuration
 // ============================================================
 
 let WOLF_TOKEN = "";
 let WOLF_APP_CHECK_TOKEN = "";
-
 let WOLF_DEVICE = "web";
-let WOLF_IS_APP_CHECK_ENABLED = true;
+let WOLF_IS_APP_CHECK_ENABLED = false;
+
+// ============================================================
+// Load Credentials From Chrome Session
+// ============================================================
+
+async function initializeSession() {
+    console.log("");
+    console.log("🔐 Loading WOLF credentials from Chrome session...");
+
+    const session = await loadSession();
+
+    if (!session) {
+        console.error("");
+        console.error("❌ WOLF session was not loaded.");
+        process.exit(1);
+    }
+
+    if (!session.token) {
+        console.error("");
+        console.error("❌ WOLF token was not found in Chrome session.");
+        process.exit(1);
+    }
+
+    if (
+        typeof session.isAppCheckEnabled !== "undefined" &&
+        session.isAppCheckEnabled
+    ) {
+        if (!session.appCheckToken) {
+            console.error("");
+            console.error(
+                "❌ App Check is enabled but appCheckToken was not found."
+            );
+            process.exit(1);
+        }
+    }
+
+    WOLF_TOKEN = session.token;
+
+    WOLF_APP_CHECK_TOKEN =
+        session.appCheckToken || "";
+
+    WOLF_DEVICE =
+        session.device || "web";
+
+    WOLF_IS_APP_CHECK_ENABLED =
+        Boolean(session.isAppCheckEnabled);
+
+    console.log("✅ WOLF credentials loaded from Chrome session");
+
+    console.log(
+        `🔐 WOLF token length: ${WOLF_TOKEN.length}`
+    );
+
+    console.log(
+        `📱 Device: ${WOLF_DEVICE}`
+    );
+
+    console.log(
+        `🛡️ App Check: ${
+            WOLF_IS_APP_CHECK_ENABLED
+                ? "enabled"
+                : "disabled"
+        }`
+    );
+
+    if (WOLF_APP_CHECK_TOKEN) {
+        console.log(
+            `🛡️ App Check token length: ${WOLF_APP_CHECK_TOKEN.length}`
+        );
+    }
+}
 
 // ============================================================
 // Runtime Variables
@@ -61,90 +131,10 @@ function isWatchedSubscriber(id) {
 }
 
 // ============================================================
-// Load WOLF Session
-// ============================================================
-
-async function initializeSession() {
-    console.log("");
-    console.log("========================================");
-    console.log("🔐 Loading WOLF session from Chrome");
-    console.log("========================================");
-
-    const session = await loadSession();
-
-    if (!session) {
-        throw new Error(
-            "لم يتم الحصول على WOLF session"
-        );
-    }
-
-    if (!session.token) {
-        throw new Error(
-            "WOLF token غير موجود في جلسة Chrome"
-        );
-    }
-
-    if (!session.appCheckToken) {
-        throw new Error(
-            "WOLF App Check token غير موجود في جلسة Chrome"
-        );
-    }
-
-    WOLF_TOKEN = session.token;
-    WOLF_APP_CHECK_TOKEN = session.appCheckToken;
-
-    if (session.device) {
-        WOLF_DEVICE = session.device;
-    }
-
-    if (
-        typeof session.isAppCheckEnabled !==
-        "undefined"
-    ) {
-        WOLF_IS_APP_CHECK_ENABLED =
-            Boolean(
-                session.isAppCheckEnabled
-            );
-    }
-
-    console.log(
-        "✅ WOLF credentials loaded from Chrome session"
-    );
-
-    console.log(
-        `🔐 WOLF token length: ${WOLF_TOKEN.length}`
-    );
-
-    console.log(
-        `📱 Device: ${WOLF_DEVICE}`
-    );
-
-    console.log(
-        `🛡️ App Check: ${
-            WOLF_IS_APP_CHECK_ENABLED
-                ? "enabled"
-                : "disabled"
-        }`
-    );
-
-    console.log(
-        `🛡️ App Check token length: ${WOLF_APP_CHECK_TOKEN.length}`
-    );
-
-    console.log(
-        "========================================"
-    );
-}
-
-// ============================================================
 // Create Service
 // ============================================================
 
 function createService() {
-    console.log(
-        "⚙️ Creating WOLF service..."
-    );
-
     service = new WOLF();
 
     service.config.framework.login.token =
@@ -158,10 +148,6 @@ function createService() {
             WOLF_APP_CHECK_TOKEN;
     }
 
-    console.log(
-        "⚙️ WOLF service created."
-    );
-
     return service;
 }
 
@@ -171,7 +157,7 @@ function createService() {
 
 async function initializeHandlers() {
     console.log(
-        "⚙️ Initializing wolf.js handlers..."
+        "⚙️ Initializing service handlers..."
     );
 
     await service.websocket.init();
@@ -182,7 +168,7 @@ async function initializeHandlers() {
         ).length;
 
     console.log(
-        `⚙️ Loaded ${handlerCount} socket handlers`
+        `⚙️ Loaded ${handlerCount} handlers`
     );
 }
 
@@ -213,11 +199,7 @@ function setupCommandListener() {
                     return;
                 }
 
-                if (
-                    !isWatchedSubscriber(
-                        senderId
-                    )
-                ) {
+                if (!isWatchedSubscriber(senderId)) {
                     return;
                 }
 
@@ -225,16 +207,12 @@ function setupCommandListener() {
                     `📩 Command received from ${senderId}: ${text}`
                 );
 
-                if (
-                    text === LEAVE_COMMAND
-                ) {
+                if (text === LEAVE_COMMAND) {
                     await leaveStage();
                     return;
                 }
 
-                if (
-                    text === JOIN_COMMAND
-                ) {
+                if (text === JOIN_COMMAND) {
                     await forceJoinStage();
                     return;
                 }
@@ -270,24 +248,19 @@ async function connectService() {
     const port =
         connection?.port ?? 443;
 
-    const device = WOLF_DEVICE || "web";
+    const device =
+        connection?.query?.device ||
+        WOLF_DEVICE ||
+        "web";
 
     console.log("");
     console.log(
         "🔌 Starting service connection..."
     );
 
-    console.log(
-        `🌐 Host: ${host}`
-    );
-
-    console.log(
-        `🔌 Port: ${port}`
-    );
-
-    console.log(
-        `📱 Device: ${device}`
-    );
+    console.log(`🌐 Host: ${host}`);
+    console.log(`🔌 Port: ${port}`);
+    console.log(`📱 Device: ${device}`);
 
     console.log(
         `🛡️ Security validation: ${
@@ -312,10 +285,7 @@ async function connectService() {
                 device,
 
                 state:
-                    service.config
-                        .framework
-                        .login
-                        .onlineState,
+                    service.config.framework.login.onlineState,
 
                 version:
                     connection?.version ||
@@ -334,8 +304,7 @@ async function connectService() {
         }
     );
 
-    service.websocket.socket =
-        socket;
+    service.websocket.socket = socket;
 
     socket.on(
         "connect",
@@ -344,15 +313,12 @@ async function connectService() {
             console.log(
                 "========================================"
             );
-
             console.log(
                 "🔗 Service connection established"
             );
-
             console.log(
                 `🔗 Connection ID: ${socket.id}`
             );
-
             console.log(
                 "========================================"
             );
@@ -427,9 +393,7 @@ async function waitForAuthorization(
     while (
         Date.now() - start < timeout
     ) {
-        if (
-            service.currentSubscriber?.id
-        ) {
+        if (service.currentSubscriber?.id) {
             console.log("");
             console.log(
                 "========================================"
@@ -528,8 +492,7 @@ async function checkStage() {
 
         const occupiedSlots =
             slots.filter(
-                slot =>
-                    !!slot?.occupierId
+                slot => !!slot?.occupierId
             );
 
         console.log(
@@ -549,8 +512,7 @@ async function checkStage() {
 
         const freeSlot =
             slots.find(
-                slot =>
-                    !slot?.occupierId
+                slot => !slot?.occupierId
             );
 
         if (!freeSlot) {
@@ -612,8 +574,7 @@ async function forceJoinStage() {
 
         const freeSlot =
             slots.find(
-                slot =>
-                    !slot?.occupierId
+                slot => !slot?.occupierId
             );
 
         if (!freeSlot) {
@@ -830,15 +791,34 @@ async function main() {
     );
 
     console.log(
-        "🔐 Loading Chrome session..."
+        "🔐 Loading credentials from Chrome session"
     );
 
     console.log(
         "========================================"
     );
 
-    // تحميل القيم الأربع من جلسة Chrome
+    // ========================================================
+    // Load WOLF credentials from session
+    // ========================================================
+
     await initializeSession();
+
+    console.log(
+        `📱 Device: ${WOLF_DEVICE}`
+    );
+
+    console.log(
+        `🛡️ App Check: ${
+            WOLF_IS_APP_CHECK_ENABLED
+                ? "enabled"
+                : "disabled"
+        }`
+    );
+
+    // ========================================================
+    // Create and connect service
+    // ========================================================
 
     createService();
 
