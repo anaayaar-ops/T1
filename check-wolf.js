@@ -118,9 +118,22 @@ async function initializeSession() {
     const session =
         await loadSession();
 
+    /*
+     * session-loader.js يرجع:
+     *
+     * {
+     *     v3APIToken,
+     *     appCheckToken,
+     *     device,
+     *     isAppCheckEnabled
+     * }
+     *
+     * وليس session.token
+     */
+
     if (
         !session ||
-        !session.token
+        !session.v3APIToken
     ) {
         throw new Error(
             "Session token was not loaded."
@@ -136,7 +149,7 @@ async function initializeSession() {
     }
 
     WOLF_TOKEN =
-        session.token;
+        session.v3APIToken;
 
     WOLF_APP_CHECK_TOKEN =
         session.appCheckToken;
