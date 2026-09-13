@@ -892,3 +892,4 @@ async function shutdown(
             error?.message ||
             error
         );
+    }
