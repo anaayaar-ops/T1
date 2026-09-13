@@ -78,11 +78,11 @@ async function loadWolfCredentials() {
     WOLF_TOKEN = session.token;
     WOLF_APP_CHECK_TOKEN = session.appCheckToken;
 
-    // نأخذ device من الجلسة فقط إذا كانت موجودة فعليًا،
-    // وإلا نستخدم القيمة المعروفة أنها تعمل: "wjsframework"
+    // ⚠️ تجاهل session.device عمدًا — دالة loadSession ترجّع "web" كافتراضي
+    // ثابت دائمًا (truthy)، وهذا كان يطغى على القيمة الصحيحة "wjsframework".
+    // نعتمد فقط على env var صريح أو القيمة المعروفة أنها تعمل فعليًا.
     WOLF_DEVICE =
         process.env.WOLF_DEVICE ||
-        session.device ||
         "wjsframework";
 
     WOLF_IS_APP_CHECK_ENABLED = Boolean(session.isAppCheckEnabled);
