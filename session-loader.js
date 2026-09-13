@@ -171,11 +171,10 @@ function getSocketCredentials(url) {
                   ).toLowerCase() === "true";
 
         return {
-            token: token,
-            appCheckToken: appCheckToken,
-            device: device,
-            isAppCheckEnabled:
-                isAppCheckEnabled
+            token,
+            appCheckToken,
+            device,
+            isAppCheckEnabled
         };
     } catch {
         return null;
@@ -273,7 +272,14 @@ export async function loadSession() {
         await chromium.launchPersistentContext(
             profileDir,
             {
-                headless: true,
+                /*
+                 * مهم:
+                 * نستخدم headless:false لأن نسخة
+                 * headless لم تنشئ WOLF Socket.
+                 *
+                 * GitHub سيشغل Chrome داخل Xvfb.
+                 */
+                headless: false,
 
                 viewport: {
                     width: 1365,
@@ -284,27 +290,35 @@ export async function loadSession() {
                     "--disable-blink-features=AutomationControlled",
                     "--no-sandbox",
                     "--disable-dev-shm-usage",
-                    "--disable-gpu"
+                    "--disable-gpu",
+                    "--disable-software-rasterizer",
+                    "--window-size=1365,900"
                 ]
             }
         );
 
     let page;
 
-    const pages = context.pages();
+    const pages =
+        context.pages();
 
     if (pages.length > 0) {
         page = pages[0];
     } else {
-        page = await context.newPage();
+        page =
+            await context.newPage();
     }
 
     const cdp =
         await context.newCDPSession(page);
 
-    await cdp.send("Network.enable");
+    await cdp.send(
+        "Network.enable"
+    );
 
-    await cdp.send("Page.enable");
+    await cdp.send(
+        "Page.enable"
+    );
 
     console.log(
         "✅ CDP Network enabled"
@@ -342,6 +356,10 @@ export async function loadSession() {
     }
 
 
+    /*
+     * CDP:
+     * WebSocket created
+     */
     cdp.on(
         "Network.webSocketCreated",
         function (event) {
@@ -366,7 +384,12 @@ export async function loadSession() {
             );
 
             console.log(
-                "🛡️ App Check: enabled"
+                "🛡️ App Check: " +
+                    (
+                        data.isAppCheckEnabled
+                            ? "enabled"
+                            : "disabled"
+                    )
             );
 
             console.log(
@@ -382,6 +405,10 @@ export async function loadSession() {
     );
 
 
+    /*
+     * CDP:
+     * WebSocket handshake
+     */
     cdp.on(
         "Network.webSocketWillSendHandshakeRequest",
         function (event) {
@@ -408,6 +435,9 @@ export async function loadSession() {
     );
 
 
+    /*
+     * Playwright WebSocket listener
+     */
     page.on(
         "websocket",
         function (websocket) {
@@ -457,18 +487,25 @@ export async function loadSession() {
     );
 
 
+    /*
+     * انتظار أول 45 ثانية
+     */
     await Promise.race([
         credentialsPromise,
 
         new Promise(function (resolve) {
             setTimeout(
                 resolve,
-                30000
+                45000
             );
         })
     ]);
 
 
+    /*
+     * إذا لم يظهر Socket
+     * نعيد تحميل الصفحة
+     */
     if (!credentials) {
         console.log("");
         console.log(
@@ -495,13 +532,47 @@ export async function loadSession() {
             new Promise(function (resolve) {
                 setTimeout(
                     resolve,
-                    30000
+                    45000
                 );
             })
         ]);
     }
 
 
+    /*
+     * محاولة أخيرة
+     */
+    if (!credentials) {
+        console.log("");
+        console.log(
+            "⚠️ Socket still not detected."
+        );
+
+        console.log(
+            "🔄 Navigating to WOLF again..."
+        );
+
+        await page.goto(
+            WOLF_URL,
+            {
+                waitUntil:
+                    "domcontentloaded",
+                timeout: 60000
+            }
+        );
+
+        await new Promise(function (resolve) {
+            setTimeout(
+                resolve,
+                30000
+            );
+        });
+    }
+
+
+    /*
+     * فشل التقاط بيانات الجلسة
+     */
     if (!credentials) {
         await context.close();
 
@@ -511,6 +582,9 @@ export async function loadSession() {
     }
 
 
+    /*
+     * إغلاق Chrome
+     */
     await context.close();
 
     console.log("");
