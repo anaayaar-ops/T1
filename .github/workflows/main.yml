@@ -2,6 +2,7 @@ name: Generate Lock File
 
 on:
   workflow_dispatch:
+permissions: contents: write
 
 jobs:
   generate:
