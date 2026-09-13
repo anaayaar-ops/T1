@@ -1,613 +1,623 @@
+import { chromium } from "playwright";
 import fs from "fs";
 import path from "path";
-import os from "os";
-import { execFileSync } from "child_process";
-import { chromium } from "playwright";
 
-const ZIP_FILE =
-    process.env.WOLF_PROFILE_ZIP ||
-    path.resolve("session.zip");
+const WOLF_URL = "https://app.wolf.live/mna";
+
+const PROFILE_ZIP =
+process.env.WOLF_PROFILE_ZIP ||
+path.resolve("./session.zip");
 
 const RUNTIME_DIR =
-    path.join(
-        os.tmpdir(),
-        "service-session-runtime"
-    );
+process.env.WOLF_SESSION_DIR ||
+path.join(
+process.env.RUNNER_TEMP || process.cwd(),
+"wolf-session-runtime"
+);
 
-const START_URL =
-    "https://wolf.live/mna";
+const DEVICE =
+process.env.WOLF_DEVICE || "web";
 
-function removePath(target) {
-    try {
-        if (fs.existsSync(target)) {
-            fs.rmSync(target, {
-                recursive: true,
-                force: true
-            });
-        }
-    } catch {}
+const APP_CHECK_ENABLED =
+String(
+process.env.WOLF_IS_APP_CHECK_ENABLED || "true"
+).toLowerCase() === "true";
+
+function log(message = "") {
+console.log(message);
 }
 
-function extractArchive() {
-    if (!fs.existsSync(ZIP_FILE)) {
-        throw new Error(
-            "Session archive was not found."
-        );
-    }
-
-    removePath(RUNTIME_DIR);
-
-    fs.mkdirSync(
-        RUNTIME_DIR,
-        {
-            recursive: true
-        }
-    );
-
-    console.log(
-        "Preparing session..."
-    );
-
-    if (process.platform === "win32") {
-        const escapedZip =
-            ZIP_FILE.replace(/'/g, "''");
-
-        const escapedDestination =
-            RUNTIME_DIR.replace(/'/g, "''");
-
-        execFileSync(
-            "powershell.exe",
-            [
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                `Expand-Archive -LiteralPath '${escapedZip}' -DestinationPath '${escapedDestination}' -Force`
-            ],
-            {
-                stdio: "inherit"
-            }
-        );
-    } else {
-        execFileSync(
-            "unzip",
-            [
-                "-q",
-                "-o",
-                ZIP_FILE,
-                "-d",
-                RUNTIME_DIR
-            ],
-            {
-                stdio: "inherit"
-            }
-        );
-    }
+function ensureDirectory(dir) {
+if (!fs.existsSync(dir)) {
+fs.mkdirSync(dir, {
+recursive: true
+});
 }
-
-function looksLikeProfile(directory) {
-    if (!fs.existsSync(directory)) {
-        return false;
-    }
-
-    const localState =
-        path.join(
-            directory,
-            "Local State"
-        );
-
-    const defaultDirectory =
-        path.join(
-            directory,
-            "Default"
-        );
-
-    const profileDirectory =
-        path.join(
-            directory,
-            "Profile 1"
-        );
-
-    return (
-        fs.existsSync(localState) ||
-        fs.existsSync(defaultDirectory) ||
-        fs.existsSync(profileDirectory)
-    );
 }
 
 function findProfileRoot(root) {
-    if (looksLikeProfile(root)) {
-        return root;
+if (!fs.existsSync(root)) {
+return null;
+}
+
+```
+if (
+    fs.existsSync(
+        path.join(root, "Local State")
+    ) ||
+    fs.existsSync(
+        path.join(root, "Default")
+    )
+) {
+    return root;
+}
+
+const entries = fs
+    .readdirSync(root, {
+        withFileTypes: true
+    })
+    .filter(entry => entry.isDirectory());
+
+for (const entry of entries) {
+    const candidate = path.join(
+        root,
+        entry.name
+    );
+
+    if (
+        fs.existsSync(
+            path.join(candidate, "Local State")
+        ) ||
+        fs.existsSync(
+            path.join(candidate, "Default")
+        )
+    ) {
+        return candidate;
     }
+}
 
-    const directCandidates = [
-        "wolf-profile",
-        "profile",
-        "chrome-profile",
-        "User Data",
-        "Chrome"
-    ];
+return null;
+```
 
-    for (const name of directCandidates) {
-        const candidate =
-            path.join(root, name);
+}
 
-        if (looksLikeProfile(candidate)) {
-            return candidate;
+async function extractSessionArchive(
+zipFile,
+destination
+) {
+ensureDirectory(destination);
+
+```
+if (!fs.existsSync(zipFile)) {
+    throw new Error(
+        `Session ZIP not found: ${zipFile}`
+    );
+}
+
+const {
+    execFileSync
+} = await import("child_process");
+
+if (process.platform === "win32") {
+    execFileSync(
+        "powershell",
+        [
+            "-NoProfile",
+            "-Command",
+            `Expand-Archive -LiteralPath '${zipFile.replace(
+                /'/g,
+                "''"
+            )}' -DestinationPath '${destination.replace(
+                /'/g,
+                "''"
+            )}' -Force`
+        ],
+        {
+            stdio: "inherit"
         }
+    );
+
+    return;
+}
+
+execFileSync(
+    "unzip",
+    [
+        "-o",
+        zipFile,
+        "-d",
+        destination
+    ],
+    {
+        stdio: "inherit"
     }
+);
+```
 
-    function search(directory, depth) {
-        if (depth > 5) {
-            return null;
-        }
+}
 
-        let entries;
+function extractSocketCredentials(url) {
+try {
+const parsed = new URL(url);
 
-        try {
-            entries =
-                fs.readdirSync(
-                    directory,
-                    {
-                        withFileTypes: true
-                    }
-                );
-        } catch {
-            return null;
-        }
-
-        for (const entry of entries) {
-            if (!entry.isDirectory()) {
-                continue;
-            }
-
-            const candidate =
-                path.join(
-                    directory,
-                    entry.name
-                );
-
-            if (
-                looksLikeProfile(
-                    candidate
-                )
-            ) {
-                return candidate;
-            }
-
-            const result =
-                search(
-                    candidate,
-                    depth + 1
-                );
-
-            if (result) {
-                return result;
-            }
-        }
-
+```
+    if (
+        !parsed.hostname.includes(
+            "palringo.com"
+        )
+    ) {
         return null;
     }
 
-    return search(root, 0);
-}
-
-async function readLocalStorage(
-    page,
-    key
-) {
-    return page.evaluate(
-        storageKey => {
-            return localStorage.getItem(
-                storageKey
-            );
-        },
-        key
-    );
-}
-
-function installNetworkCapture(page) {
-    let appCheckToken = null;
-
-    page.on(
-        "request",
-        request => {
-            try {
-                const headers =
-                    request.headers();
-
-                const possible =
-                    headers[
-                        "x-firebase-appcheck"
-                    ];
-
-                if (
-                    possible &&
-                    typeof possible === "string" &&
-                    possible.length > 20
-                ) {
-                    appCheckToken =
-                        possible;
-                }
-            } catch {}
-        }
-    );
-
-    return {
-        getToken() {
-            return appCheckToken;
-        }
-    };
-}
-
-function installWebSocketCapture(page) {
-    let appCheckToken = null;
-
-    page.on(
-        "websocket",
-        websocket => {
-            try {
-                const url =
-                    websocket.url();
-
-                const parsed =
-                    new URL(url);
-
-                const candidates = [
-                    "appCheckToken",
-                    "app_check_token",
-                    "appcheck",
-                    "x-firebase-appcheck"
-                ];
-
-                for (
-                    const key of candidates
-                ) {
-                    const value =
-                        parsed.searchParams.get(
-                            key
-                        );
-
-                    if (
-                        value &&
-                        value.length > 20
-                    ) {
-                        appCheckToken =
-                            value;
-
-                        break;
-                    }
-                }
-            } catch {}
-        }
-    );
-
-    return {
-        getToken() {
-            return appCheckToken;
-        }
-    };
-}
-
-async function findAppCheckInLocalStorage(page) {
-    return page.evaluate(() => {
-        const results = [];
-
-        try {
-            for (
-                let i = 0;
-                i < localStorage.length;
-                i++
-            ) {
-                const key =
-                    localStorage.key(i);
-
-                if (!key) {
-                    continue;
-                }
-
-                const lower =
-                    key.toLowerCase();
-
-                if (
-                    lower.includes("appcheck") ||
-                    lower.includes("app_check") ||
-                    lower.includes("firebaseappcheck")
-                ) {
-                    const value =
-                        localStorage.getItem(key);
-
-                    if (
-                        value &&
-                        value.length > 20
-                    ) {
-                        results.push({
-                            key,
-                            value
-                        });
-                    }
-                }
-            }
-        } catch {}
-
-        return results;
-    });
-}
-
-async function waitForAppCheck(
-    page,
-    networkCapture,
-    websocketCapture,
-    timeoutMs = 30000
-) {
-    const started =
-        Date.now();
-
-    while (
-        Date.now() - started <
-        timeoutMs
+    if (
+        !parsed.pathname.includes(
+            "/socket.io/"
+        )
     ) {
-        const networkToken =
-            networkCapture.getToken();
-
-        if (networkToken) {
-            return networkToken;
-        }
-
-        const websocketToken =
-            websocketCapture.getToken();
-
-        if (websocketToken) {
-            return websocketToken;
-        }
-
-        try {
-            const localResults =
-                await findAppCheckInLocalStorage(
-                    page
-                );
-
-            for (
-                const item of localResults
-            ) {
-                const value =
-                    item.value;
-
-                try {
-                    const parsed =
-                        JSON.parse(value);
-
-                    if (
-                        parsed &&
-                        typeof parsed ===
-                            "object"
-                    ) {
-                        const candidates = [
-                            parsed.token,
-                            parsed.appCheckToken,
-                            parsed.tokenResponse?.token,
-                            parsed.tokenResponse?.appCheckToken
-                        ];
-
-                        for (
-                            const candidate
-                            of candidates
-                        ) {
-                            if (
-                                typeof candidate ===
-                                    "string" &&
-                                candidate.length > 20
-                            ) {
-                                return candidate;
-                            }
-                        }
-                    }
-                } catch {}
-
-                if (
-                    typeof value === "string" &&
-                    value.length > 100
-                ) {
-                    return value;
-                }
-            }
-        } catch {}
-
-        await page.waitForTimeout(
-            1000
-        );
+        return null;
     }
 
+    const params =
+        parsed.searchParams;
+
+    const token =
+        params.get("token");
+
+    const appCheckToken =
+        params.get(
+            "appCheckToken"
+        );
+
+    const device =
+        params.get("device") ||
+        DEVICE;
+
+    const isAppCheckEnabled =
+        params.get(
+            "isAppCheckEnabled"
+        );
+
+    if (
+        !token ||
+        !appCheckToken
+    ) {
+        return null;
+    }
+
+    return {
+        token,
+        appCheckToken,
+        device,
+        isAppCheckEnabled:
+            isAppCheckEnabled === null
+                ? APP_CHECK_ENABLED
+                : String(
+                      isAppCheckEnabled
+                  ).toLowerCase() ===
+                  "true"
+    };
+} catch {
     return null;
+}
+```
+
 }
 
 export async function loadSession() {
-    extractArchive();
+log("");
+log("========================================");
+log("🔐 Loading WOLF session");
+log("========================================");
+log("");
 
-    const profileRoot =
+```
+let profileDir;
+
+// ============================================================
+// استخدام wolf-profile محليًا
+// ============================================================
+
+if (
+    !process.env.WOLF_PROFILE_ZIP &&
+    fs.existsSync(
+        path.resolve("./wolf-profile")
+    )
+) {
+    profileDir =
+        path.resolve("./wolf-profile");
+
+    log(
+        "📁 Using local wolf-profile"
+    );
+} else {
+    // ========================================================
+    // استخراج session.zip
+    // ========================================================
+
+    log(
+        "📦 Session archive detected."
+    );
+
+    if (!fs.existsSync(PROFILE_ZIP)) {
+        throw new Error(
+            `Session ZIP not found: ${PROFILE_ZIP}`
+        );
+    }
+
+    if (fs.existsSync(RUNTIME_DIR)) {
+        fs.rmSync(
+            RUNTIME_DIR,
+            {
+                recursive: true,
+                force: true
+            }
+        );
+    }
+
+    ensureDirectory(
+        RUNTIME_DIR
+    );
+
+    log(
+        "📦 Extracting Chrome profile..."
+    );
+
+    await extractSessionArchive(
+        PROFILE_ZIP,
+        RUNTIME_DIR
+    );
+
+    profileDir =
         findProfileRoot(
             RUNTIME_DIR
         );
 
-    if (!profileRoot) {
-        removePath(
-            RUNTIME_DIR
-        );
-
+    if (!profileDir) {
         throw new Error(
-            "Could not locate the browser profile inside the archive."
-        );
-    }
-
-    console.log(
-        "Session profile detected."
-    );
-
-    let context = null;
-
-    try {
-        context =
-            await chromium.launchPersistentContext(
-                profileRoot,
-                {
-                    headless: true,
-
-                    viewport: {
-                        width: 1280,
-                        height: 900
-                    },
-
-                    locale: "en-US",
-
-                    args: [
-                        "--no-sandbox",
-                        "--disable-setuid-sandbox",
-                        "--disable-dev-shm-usage",
-                        "--disable-gpu",
-                        "--no-first-run",
-                        "--no-default-browser-check"
-                    ]
-                }
-            );
-
-        let page =
-            context.pages()[0];
-
-        if (!page) {
-            page =
-                await context.newPage();
-        }
-
-        const networkCapture =
-            installNetworkCapture(
-                page
-            );
-
-        const websocketCapture =
-            installWebSocketCapture(
-                page
-            );
-
-        console.log(
-            "Opening session..."
-        );
-
-        await page.goto(
-            START_URL,
-            {
-                waitUntil:
-                    "domcontentloaded",
-                timeout: 120000
-            }
-        );
-
-        console.log(
-            `Session page: ${page.url()}`
-        );
-
-        await page.waitForTimeout(
-            10000
-        );
-
-        let token = null;
-
-        for (
-            let attempt = 0;
-            attempt < 20;
-            attempt++
-        ) {
-            token =
-                await readLocalStorage(
-                    page,
-                    "v3APIToken"
-                );
-
-            if (token) {
-                break;
-            }
-
-            await page.waitForTimeout(
-                1000
-            );
-        }
-
-        if (!token) {
-            throw new Error(
-                "Required v3APIToken was not found."
-            );
-        }
-
-        console.log(
-            "WOLF API token loaded."
-        );
-
-        let appCheckToken =
-            await waitForAppCheck(
-                page,
-                networkCapture,
-                websocketCapture,
-                30000
-            );
-
-        if (!appCheckToken) {
-            console.log(
-                "⚠️ App Check token was not captured. Reloading..."
-            );
-
-            try {
-                await page.reload({
-                    waitUntil:
-                        "domcontentloaded",
-                    timeout: 120000
-                });
-
-                await page.waitForTimeout(
-                    15000
-                );
-            } catch {}
-
-            appCheckToken =
-                await waitForAppCheck(
-                    page,
-                    networkCapture,
-                    websocketCapture,
-                    20000
-                );
-        }
-
-        if (!appCheckToken) {
-            throw new Error(
-                "App Check token could not be captured from the saved WOLF session."
-            );
-        }
-
-        console.log(
-            "✅ App Check token captured."
-        );
-
-        const deviceToken =
-            await readLocalStorage(
-                page,
-                "deviceToken"
-            );
-
-        return {
-            token,
-
-            deviceToken:
-                deviceToken || "",
-
-            appCheckToken
-        };
-
-    } finally {
-        if (context) {
-            try {
-                await context.close();
-            } catch {}
-        }
-
-        removePath(
-            RUNTIME_DIR
+            "Chrome profile could not be located inside session archive."
         );
     }
 }
+
+log("");
+log("📁 Profile:");
+log(profileDir);
+log("");
+
+// ============================================================
+// تشغيل Chrome
+// ============================================================
+
+log(
+    "🌐 Opening saved Chrome session..."
+);
+
+const context =
+    await chromium.launchPersistentContext(
+        profileDir,
+        {
+            headless: true,
+
+            viewport: {
+                width: 1365,
+                height: 900
+            },
+
+            args: [
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu"
+            ]
+        }
+    );
+
+let pages =
+    context.pages();
+
+let page =
+    pages[0];
+
+if (!page) {
+    page =
+        await context.newPage();
+}
+
+// ============================================================
+// CDP
+// ============================================================
+
+const cdp =
+    await context.newCDPSession(
+        page
+    );
+
+await cdp.send(
+    "Network.enable"
+);
+
+await cdp.send(
+    "Page.enable"
+);
+
+log(
+    "✅ CDP Network enabled"
+);
+
+// ============================================================
+// انتظار بيانات Socket
+// ============================================================
+
+let credentials = null;
+
+let resolveCredentials;
+
+const credentialsPromise =
+    new Promise(resolve => {
+        resolveCredentials =
+            resolve;
+    });
+
+function acceptCredentials(
+    data
+) {
+    if (credentials) {
+        return;
+    }
+
+    if (
+        !data ||
+        !data.token ||
+        !data.appCheckToken
+    ) {
+        return;
+    }
+
+    credentials = data;
+
+    resolveCredentials(
+        data
+    );
+}
+
+// ============================================================
+// Network.webSocketCreated
+// ============================================================
+
+cdp.on(
+    "Network.webSocketCreated",
+    event => {
+        const url =
+            event.url || "";
+
+        const data =
+            extractSocketCredentials(
+                url
+            );
+
+        if (!data) {
+            return;
+        }
+
+        log("");
+        log(
+            "🎯 WOLF Socket detected"
+        );
+
+        log(
+            `📱 Device: ${data.device}`
+        );
+
+        log(
+            `🛡️ App Check: ${
+                data.isAppCheckEnabled
+                    ? "enabled"
+                    : "disabled"
+            }`
+        );
+
+        log(
+            "🔑 WOLF token captured"
+        );
+
+        log(
+            "🛡️ App Check token captured"
+        );
+
+        acceptCredentials(
+            data
+        );
+    }
+);
+
+// ============================================================
+// Network.webSocketWillSendHandshakeRequest
+// ============================================================
+
+cdp.on(
+    "Network.webSocketWillSendHandshakeRequest",
+    event => {
+        const request =
+            event.request || {};
+
+        const url =
+            request.url || "";
+
+        const data =
+            extractSocketCredentials(
+                url
+            );
+
+        if (!data) {
+            return;
+        }
+
+        log("");
+        log(
+            "🤝 WOLF Socket handshake detected"
+        );
+
+        acceptCredentials(
+            data
+        );
+    }
+);
+
+// ============================================================
+// Playwright WebSocket fallback
+// ============================================================
+
+page.on(
+    "websocket",
+    ws => {
+        const data =
+            extractSocketCredentials(
+                ws.url()
+            );
+
+        if (!data) {
+            return;
+        }
+
+        log("");
+        log(
+            "🔌 WOLF WebSocket detected"
+        );
+
+        acceptCredentials(
+            data
+        );
+    }
+);
+
+// ============================================================
+// فتح WOLF
+// ============================================================
+
+log("");
+log(
+    "🌐 Opening WOLF..."
+);
+
+await page.goto(
+    WOLF_URL,
+    {
+        waitUntil:
+            "domcontentloaded",
+        timeout: 60000
+    }
+);
+
+log("");
+log(
+    `🌐 Session page: ${page.url()}`
+);
+
+log("");
+log(
+    "⏳ Waiting for WOLF Socket..."
+);
+
+// ============================================================
+// الانتظار الأول
+// ============================================================
+
+await Promise.race([
+    credentialsPromise,
+    new Promise(resolve =>
+        setTimeout(
+            resolve,
+            30000
+        )
+    )
+]);
+
+// ============================================================
+// Reload إذا لم نجد Socket
+// ============================================================
+
+if (!credentials) {
+    log("");
+    log(
+        "⚠️ Socket credentials not captured."
+    );
+
+    log(
+        "🔄 Reloading WOLF..."
+    );
+
+    await page.reload({
+        waitUntil:
+            "domcontentloaded",
+        timeout: 60000
+    });
+
+    log(
+        "⏳ Waiting after reload..."
+    );
+
+    await Promise.race([
+        credentialsPromise,
+        new Promise(resolve =>
+            setTimeout(
+                resolve,
+                30000
+            )
+        )
+    ]);
+}
+
+// ============================================================
+// فشل
+// ============================================================
+
+if (!credentials) {
+    await context.close();
+
+    throw new Error(
+        "WOLF Socket App Check token could not be captured."
+    );
+}
+
+// ============================================================
+// إغلاق Chrome
+// ============================================================
+
+await context.close();
+
+log("");
+log(
+    "========================================"
+);
+log(
+    "✅ WOLF credentials captured"
+);
+log(
+    "========================================"
+);
+
+log("");
+log(
+    "🔒 Chrome session closed."
+);
+
+log("");
+
+// ============================================================
+// إرجاع القيم إلى check-wolf.js
+// ============================================================
+
+return {
+    v3APIToken:
+        credentials.token,
+
+    appCheckToken:
+        credentials.appCheckToken,
+
+    device:
+        credentials.device ||
+        DEVICE,
+
+    isAppCheckEnabled:
+        credentials.isAppCheckEnabled
+};
