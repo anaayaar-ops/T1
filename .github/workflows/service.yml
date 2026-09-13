@@ -1,116 +1,73 @@
-name: Service Runtime
+name: WOLF Bot
 
 on:
   workflow_dispatch:
 
-  schedule:
-    - cron: "0 */4 * * *"
-
-
-permissions:
-  contents: read
-
-
 jobs:
-  runtime:
+  wolf:
     runs-on: ubuntu-latest
-
-    timeout-minutes: 240
-
+    timeout-minutes: 360
 
     steps:
-
-      # ========================================
-      # Checkout
-      # ========================================
-
-      - name: Checkout
-        uses: actions/checkout@v4
-
-
-      # ========================================
-      # Node.js
-      # ========================================
+      - name: Checkout repository
+        uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: 24
-          cache: npm
+          node-version: "20"
 
-
-      # ========================================
-      # Dependencies
-      # ========================================
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          ffmpeg -version
 
       - name: Install dependencies
-        run: npm ci
-
-
-      # ========================================
-      # Chromium
-      # ========================================
+        run: npm install
 
       - name: Install Chromium
         run: |
           npx playwright install --with-deps chromium
-
-
-      # ========================================
-      # Xvfb
-      # ========================================
 
       - name: Install Xvfb
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb
 
-
-      # ========================================
-      # Google Drive downloader
-      # ========================================
-
       - name: Install Google Drive downloader
         run: |
           python3 -m pip install --upgrade gdown
 
-
-      # ========================================
-      # Download session
-      # ========================================
-
-      - name: Download session
+      - name: Download WOLF Chrome session
         env:
           WOLF_PROFILE_URL: ${{ secrets.WOLF_PROFILE_URL }}
 
         run: |
           set -e
 
+          echo "========================================"
+          echo "📥 Downloading WOLF Chrome session"
+          echo "========================================"
+
           if [ -z "$WOLF_PROFILE_URL" ]; then
             echo "❌ WOLF_PROFILE_URL secret is missing."
             exit 1
           fi
 
-          echo "📥 Downloading session archive..."
-
           gdown "$WOLF_PROFILE_URL" \
             -O session.zip
 
           if [ ! -s session.zip ]; then
-            echo "❌ Session archive is empty."
+            echo "❌ session.zip is empty."
             exit 1
           fi
 
-          echo "✅ Session archive downloaded."
+          echo "✅ WOLF session downloaded."
 
           ls -lh session.zip
 
-
-      # ========================================
-      # Start runtime
-      # ========================================
-
-      - name: Start runtime
+      - name: Start WOLF Bot
         env:
           WOLF_PROFILE_ZIP: ${{ github.workspace }}/session.zip
           WOLF_DEVICE: web
@@ -118,22 +75,16 @@ jobs:
 
         run: |
           echo "========================================"
-          echo "🐺 Starting WOLF runtime"
+          echo "🐺 Starting WOLF Bot"
           echo "========================================"
 
           xvfb-run -a \
             --server-args="-screen 0 1365x900x24" \
-            node check-wolf.js
+            npm start
 
-
-      # ========================================
-      # Cleanup
-      # ========================================
-
-      - name: Cleanup session
+      - name: Cleanup
         if: always()
-
         run: |
           rm -f session.zip
-          rm -rf "$RUNNER_TEMP/service-session-runtime"
           rm -rf "$RUNNER_TEMP/wolf-session-runtime"
+          rm -rf "$RUNNER_TEMP/service-session-runtime"
