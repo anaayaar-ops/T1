@@ -94,8 +94,12 @@ async function loadWolfCredentials() {
     WOLF_APP_CHECK_TOKEN =
         session.appCheckToken || "";
 
-    WOLF_DEVICE =
-        session.device || "web";
+    // ========================================================
+    // الجهاز WEB فقط
+    // لا نعتمد على قيمة device القادمة من wolf.js
+    // ========================================================
+
+    WOLF_DEVICE = "web";
 
     WOLF_IS_APP_CHECK_ENABLED =
         session.isAppCheckEnabled === true;
@@ -171,6 +175,11 @@ function createService() {
 
     service.config.framework.login.onlineState =
         OnlineState.INVISIBLE;
+
+    if (WOLF_APP_CHECK_TOKEN) {
+        service.config.framework.login.appCheckToken =
+            WOLF_APP_CHECK_TOKEN;
+    }
 
     return service;
 }
@@ -274,10 +283,14 @@ async function connectService() {
     const port =
         connection?.port ?? 443;
 
-    const device =
-        connection?.query?.device ||
-        WOLF_DEVICE ||
-        "web";
+    // ========================================================
+    // IMPORTANT
+    //
+    // الجهاز WEB فقط
+    // نفس الطريقة التي تعمل عندك
+    // ========================================================
+
+    const device = "web";
 
     console.log("");
     console.log(
@@ -285,7 +298,7 @@ async function connectService() {
     );
 
     console.log(
-        "🔌 Starting WOLF Socket.IO connection"
+        "🔌 Starting service connection..."
     );
 
     console.log(
@@ -293,15 +306,11 @@ async function connectService() {
     );
 
     console.log(
-        "🐺 wolf.js version: 2.7.10"
+        `🌐 Host: ${host}`
     );
 
     console.log(
-        `🌐 WOLF host: ${host}`
-    );
-
-    console.log(
-        `🔌 WOLF port: ${port}`
+        `🔌 Port: ${port}`
     );
 
     console.log(
@@ -309,7 +318,7 @@ async function connectService() {
     );
 
     console.log(
-        `🛡️ App Check: ${
+        `🛡️ Security validation: ${
             WOLF_IS_APP_CHECK_ENABLED
                 ? "enabled"
                 : "disabled"
@@ -317,11 +326,7 @@ async function connectService() {
     );
 
     // ========================================================
-    // IMPORTANT
-    //
-    // هذا هو نفس أسلوب الاتصال الذي يعمل عندك.
-    //
-    // Chrome لم يعد مستخدمًا هنا.
+    // Socket.IO
     // ========================================================
 
     socket = io(
@@ -339,8 +344,8 @@ async function connectService() {
                 device,
 
                 state:
-                    service.config.framework
-                        .login.onlineState,
+                    service.config.framework.login
+                        .onlineState,
 
                 version:
                     connection?.version ||
@@ -360,7 +365,7 @@ async function connectService() {
     );
 
     // ========================================================
-    // ربط الـ Socket مع wolf.js
+    // ربط Socket مع wolf.js
     // ========================================================
 
     service.websocket.socket = socket;
@@ -473,10 +478,6 @@ async function connectService() {
     );
 
     socket.connect();
-
-    // ========================================================
-    // Wait Until wolf.js Gets Subscriber
-    // ========================================================
 
     await waitForAuthorization();
 }
@@ -924,38 +925,36 @@ async function main() {
 
     // ========================================================
     // STEP 1
-    // فتح Chrome واستخراج credentials
+    // Chrome -> credentials
     // ========================================================
 
     await loadWolfCredentials();
 
     // ========================================================
     // STEP 2
-    // إنشاء wolf.js
+    // Create wolf.js service
     // ========================================================
 
     createService();
 
     // ========================================================
     // STEP 3
-    // تحميل handlers
+    // Initialize handlers
     // ========================================================
 
     await initializeHandlers();
 
     // ========================================================
     // STEP 4
-    // Listener للأوامر الخاصة
+    // Private commands
     // ========================================================
 
     setupCommandListener();
 
     // ========================================================
     // STEP 5
-    //
-    // Chrome مغلق الآن.
-    //
-    // الاتصال التالي Socket.IO فقط.
+    // Chrome مغلق الآن
+    // Socket.IO فقط
     // ========================================================
 
     await connectService();
@@ -977,14 +976,14 @@ async function main() {
 
     // ========================================================
     // STEP 7
-    // أول فحص للـ Stage
+    // First Stage check
     // ========================================================
 
     await checkStage();
 
     // ========================================================
     // STEP 8
-    // تشغيل المراقبة
+    // Start monitoring
     // ========================================================
 
     if (!currentSlotId) {
@@ -1018,6 +1017,10 @@ async function main() {
 
     console.log(
         "🌐 Chrome: CLOSED"
+    );
+
+    console.log(
+        "📱 Device: web"
     );
 
     console.log(
