@@ -143,7 +143,7 @@ async function extractSessionArchive(
 
 
 // ============================================================
-// Read ONLY the required four values
+// Read WOLF credentials
 // ============================================================
 
 async function readWolfCredentials(page) {
@@ -160,24 +160,122 @@ async function readWolfCredentials(page) {
             };
 
             return {
-                token: read("v3APIToken"),
-                appCheckToken: read("appCheckToken")
+                token:
+                    read("v3APIToken"),
+
+                appCheckToken:
+                    read("appCheckToken")
             };
         });
+
+
+    // ========================================================
+    // Diagnostic information
+    // ========================================================
+
+    console.log("");
+    console.log(
+        "========================================"
+    );
+
+    console.log(
+        "🔎 فحص WOLF localStorage"
+    );
+
+    console.log(
+        "========================================"
+    );
+
+    console.log(
+        "🔐 v3APIToken موجود:",
+        Boolean(data?.token)
+    );
+
+    console.log(
+        "🔐 v3APIToken length:",
+        data?.token?.length ?? 0
+    );
+
+    console.log(
+        "🛡️ appCheckToken موجود:",
+        Boolean(data?.appCheckToken)
+    );
+
+    console.log(
+        "🛡️ appCheckToken length:",
+        data?.appCheckToken?.length ?? 0
+    );
+
+
+    // ========================================================
+    // Print partial values only
+    // ========================================================
+
+    if (data?.token) {
+
+        console.log(
+            "🔐 token البداية:",
+            data.token.substring(0, 10)
+        );
+
+        console.log(
+            "🔐 token النهاية:",
+            data.token.slice(-10)
+        );
+    }
+
+    if (data?.appCheckToken) {
+
+        console.log(
+            "🛡️ appCheckToken البداية:",
+            data.appCheckToken.substring(0, 10)
+        );
+
+        console.log(
+            "🛡️ appCheckToken النهاية:",
+            data.appCheckToken.slice(-10)
+        );
+    }
+
+    console.log(
+        "========================================"
+    );
+
+
+    // ========================================================
+    // Validate
+    // ========================================================
 
     if (
         !data?.token ||
         !data?.appCheckToken
     ) {
+
+        console.log(
+            "❌ القيم المطلوبة غير مكتملة."
+        );
+
         return null;
     }
 
-    // ONLY these four values are returned.
+
+    // ========================================================
+    // Return ONLY four values
+    // ========================================================
+
     return {
-        device: DEFAULT_DEVICE,
-        isAppCheckEnabled: DEFAULT_APP_CHECK_ENABLED,
-        token: data.token,
-        appCheckToken: data.appCheckToken
+
+        device:
+            DEFAULT_DEVICE,
+
+        isAppCheckEnabled:
+            DEFAULT_APP_CHECK_ENABLED,
+
+        token:
+            data.token,
+
+        appCheckToken:
+            data.appCheckToken
     };
 }
 
@@ -187,6 +285,20 @@ async function readWolfCredentials(page) {
 // ============================================================
 
 export async function loadSession() {
+
+    console.log("");
+    console.log(
+        "========================================"
+    );
+
+    console.log(
+        "🐺 WOLF Session Loader"
+    );
+
+    console.log(
+        "========================================"
+    );
+
 
     // ========================================================
     // Locate Profile
@@ -199,17 +311,47 @@ export async function loadSession() {
         fs.existsSync(LOCAL_PROFILE)
     ) {
 
-        profileDir = LOCAL_PROFILE;
+        console.log(
+            "📁 استخدام Chrome profile المحلي:"
+        );
+
+        console.log(
+            LOCAL_PROFILE
+        );
+
+        profileDir =
+            LOCAL_PROFILE;
 
     } else {
 
+        console.log(
+            "📦 استخدام WOLF Session ZIP:"
+        );
+
+        console.log(
+            PROFILE_ZIP
+        );
+
+
         if (!fs.existsSync(PROFILE_ZIP)) {
+
             throw new Error(
-                "Session ZIP not found: " + PROFILE_ZIP
+                "Session ZIP not found: " +
+                PROFILE_ZIP
             );
         }
 
+
+        // ====================================================
+        // Clean old runtime
+        // ====================================================
+
         if (fs.existsSync(RUNTIME_DIR)) {
+
+            console.log(
+                "🧹 حذف Session runtime القديم..."
+            );
+
             fs.rmSync(
                 RUNTIME_DIR,
                 {
@@ -219,6 +361,7 @@ export async function loadSession() {
             );
         }
 
+
         fs.mkdirSync(
             RUNTIME_DIR,
             {
@@ -226,19 +369,46 @@ export async function loadSession() {
             }
         );
 
+
+        // ====================================================
+        // Extract
+        // ====================================================
+
+        console.log(
+            "📦 فك ضغط WOLF Chrome Session..."
+        );
+
         await extractSessionArchive(
             PROFILE_ZIP,
             RUNTIME_DIR
         );
 
+
+        // ====================================================
+        // Find profile
+        // ====================================================
+
         profileDir =
-            findProfileRoot(RUNTIME_DIR);
+            findProfileRoot(
+                RUNTIME_DIR
+            );
+
 
         if (!profileDir) {
+
             throw new Error(
                 "Chrome profile could not be located inside session archive."
             );
         }
+
+
+        console.log(
+            "✅ تم العثور على Chrome profile:"
+        );
+
+        console.log(
+            profileDir
+        );
     }
 
 
@@ -246,10 +416,25 @@ export async function loadSession() {
     // Launch Chrome
     // ========================================================
 
+    console.log("");
+    console.log(
+        "========================================"
+    );
+
+    console.log(
+        "🌐 تشغيل Chrome..."
+    );
+
+    console.log(
+        "========================================"
+    );
+
+
     const context =
         await chromium.launchPersistentContext(
             profileDir,
             {
+
                 headless: false,
 
                 viewport: {
@@ -258,11 +443,17 @@ export async function loadSession() {
                 },
 
                 args: [
+
                     "--disable-blink-features=AutomationControlled",
+
                     "--no-sandbox",
+
                     "--disable-dev-shm-usage",
+
                     "--disable-gpu",
+
                     "--disable-software-rasterizer",
+
                     "--window-size=1365,900"
                 ]
             }
@@ -273,12 +464,24 @@ export async function loadSession() {
 
         let page;
 
-        const pages = context.pages();
+
+        // ====================================================
+        // Get existing page
+        // ====================================================
+
+        const pages =
+            context.pages();
+
 
         if (pages.length > 0) {
-            page = pages[0];
+
+            page =
+                pages[0];
+
         } else {
-            page = await context.newPage();
+
+            page =
+                await context.newPage();
         }
 
 
@@ -286,23 +489,51 @@ export async function loadSession() {
         // Open WOLF
         // ====================================================
 
+        console.log(
+            "🌐 فتح WOLF..."
+        );
+
+        console.log(
+            WOLF_URL
+        );
+
+
         await page.goto(
             WOLF_URL,
             {
-                waitUntil: "domcontentloaded",
-                timeout: 60000
+                waitUntil:
+                    "domcontentloaded",
+
+                timeout:
+                    60000
             }
         );
 
-        await page.waitForTimeout(10000);
+
+        console.log(
+            "⏳ انتظار تحميل WOLF..."
+        );
+
+
+        await page.waitForTimeout(
+            10000
+        );
 
 
         // ====================================================
-        // Try to read credentials
+        // First attempt
         // ====================================================
+
+        console.log("");
+        console.log(
+            "🔎 محاولة قراءة Session..."
+        );
+
 
         let credentials =
-            await readWolfCredentials(page);
+            await readWolfCredentials(
+                page
+            );
 
 
         // ====================================================
@@ -311,17 +542,32 @@ export async function loadSession() {
 
         if (!credentials) {
 
+            console.log("");
+            console.log(
+                "🔄 Retry #1: إعادة تحميل WOLF..."
+            );
+
+
             await page.reload(
                 {
-                    waitUntil: "domcontentloaded",
-                    timeout: 60000
+                    waitUntil:
+                        "domcontentloaded",
+
+                    timeout:
+                        60000
                 }
             );
 
-            await page.waitForTimeout(15000);
+
+            await page.waitForTimeout(
+                15000
+            );
+
 
             credentials =
-                await readWolfCredentials(page);
+                await readWolfCredentials(
+                    page
+                );
         }
 
 
@@ -331,18 +577,33 @@ export async function loadSession() {
 
         if (!credentials) {
 
+            console.log("");
+            console.log(
+                "🔄 Retry #2: فتح WOLF من جديد..."
+            );
+
+
             await page.goto(
                 WOLF_URL,
                 {
-                    waitUntil: "domcontentloaded",
-                    timeout: 60000
+                    waitUntil:
+                        "domcontentloaded",
+
+                    timeout:
+                        60000
                 }
             );
 
-            await page.waitForTimeout(15000);
+
+            await page.waitForTimeout(
+                15000
+            );
+
 
             credentials =
-                await readWolfCredentials(page);
+                await readWolfCredentials(
+                    page
+                );
         }
 
 
@@ -359,29 +620,100 @@ export async function loadSession() {
 
 
         // ====================================================
+        // Success
+        // ====================================================
+
+        console.log("");
+        console.log(
+            "========================================"
+        );
+
+        console.log(
+            "✅ تم استخراج WOLF credentials بنجاح"
+        );
+
+        console.log(
+            "========================================"
+        );
+
+        console.log(
+            "📱 device:",
+            credentials.device
+        );
+
+        console.log(
+            "🛡️ isAppCheckEnabled:",
+            credentials.isAppCheckEnabled
+        );
+
+        console.log(
+            "🔐 token موجود:",
+            Boolean(credentials.token)
+        );
+
+        console.log(
+            "🔐 token length:",
+            credentials.token?.length ?? 0
+        );
+
+        console.log(
+            "🛡️ appCheckToken موجود:",
+            Boolean(credentials.appCheckToken)
+        );
+
+        console.log(
+            "🛡️ appCheckToken length:",
+            credentials.appCheckToken?.length ?? 0
+        );
+
+        console.log(
+            "========================================"
+        );
+
+
+        // ====================================================
         // Close Chrome
-        // ========================================================
+        // ====================================================
+
+        console.log(
+            "🔒 إغلاق Chrome..."
+        );
+
 
         await context.close();
 
 
+        console.log(
+            "✅ تم إغلاق Chrome."
+        );
+
+
         // ====================================================
         // Return ONLY four values
-        // ========================================================
+        // ====================================================
 
         return {
-            device: credentials.device,
+
+            device:
+                credentials.device,
+
             isAppCheckEnabled:
                 credentials.isAppCheckEnabled,
-            token: credentials.token,
+
+            token:
+                credentials.token,
+
             appCheckToken:
                 credentials.appCheckToken
         };
 
+
     } catch (error) {
 
         try {
+
             await context.close();
+
         } catch {
             // Ignore close error
         }
