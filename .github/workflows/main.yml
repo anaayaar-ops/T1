@@ -1,37 +1,35 @@
-name: Generate Lock File
+name: WOLF Bot
 
 on:
   workflow_dispatch:
-permissions:
- contents: write
 
 jobs:
-  generate:
+  wolf:
     runs-on: ubuntu-latest
+    timeout-minutes: 360
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: "20"
 
-      - name: Generate package-lock.json
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          ffmpeg -version
+
+      - name: Install dependencies
         run: npm install
 
-      - name: Commit package-lock.json
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add package-lock.json
-
-          if git diff --cached --quiet; then
-            echo "No changes to package-lock.json"
-            exit 0
-          fi
-
-          git commit -m "Update package-lock.json"
-          git push
+      - name: Start WOLF Bot
+        env:
+          WOLF_TOKEN: ${{ secrets.WOLF_TOKEN }}
+          WOLF_APP_CHECK_TOKEN: ${{ secrets.WOLF_APP_CHECK_TOKEN }}
+          WOLF_DEVICE: ${{ secrets.WOLF_DEVICE }}
+          WOLF_IS_APP_CHECK_ENABLED: ${{ secrets.WOLF_IS_APP_CHECK_ENABLED }}
+        run: npm start
