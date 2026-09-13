@@ -1,9 +1,13 @@
-
 node_modules/
-.env
-.env.local
-.env.*
-!.env.example
 
-npm-debug.log*
+session.zip
+wolf-profile.zip
+service-session-runtime/
+
+.env
+.env.*
+
+*.log
+
 .DS_Store
+Thumbs.db
