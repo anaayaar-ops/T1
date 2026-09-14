@@ -17,7 +17,7 @@ const {
 // إعدادات
 // ============================================================
 
-const GROUP_ID = 18432094;
+const GROUP_ID = 66266;
 
 const EVENT_NAME =
     " ᷂فعاليآت ᷂خليجنا،ذوق.";
@@ -28,13 +28,6 @@ const EVENT_DURATION_MIN = 45;
 
 const IMAGE_PATH =
     './178332617173751.jpeg';
-
-// ============================================================
-// بداية أول فعالية
-// ============================================================
-//
-// 14 سبتمبر 2026 - 9 مساءً بتوقيت السعودية
-//
 
 const START_TIME =
     new Date('2026-09-16T21:00:00+03:00');
@@ -72,9 +65,12 @@ function sleep(ms) {
 }
 
 function formatAMPM(date) {
-    let hours = date.getHours();
 
-    let minutes = date.getMinutes();
+    let hours =
+        date.getHours();
+
+    let minutes =
+        date.getMinutes();
 
     const ampm =
         hours >= 12
@@ -93,6 +89,7 @@ function formatAMPM(date) {
 }
 
 function formatSaudiDate(date) {
+
     return new Intl.DateTimeFormat(
         'en-GB',
         {
@@ -108,11 +105,13 @@ function formatSaudiDate(date) {
 }
 
 function maskToken(value) {
+
     if (!value) {
         return 'غير موجود';
     }
 
-    const text = String(value);
+    const text =
+        String(value);
 
     if (text.length <= 16) {
         return `${text.slice(0, 4)}...${text.slice(-4)}`;
@@ -145,6 +144,7 @@ async function loadWolfCredentials() {
         await loadSession();
 
     if (!session) {
+
         throw new Error(
             '❌ تعذر تحميل WOLF Chrome Profile'
         );
@@ -165,6 +165,7 @@ async function loadWolfCredentials() {
         );
 
     if (!WOLF_TOKEN) {
+
         throw new Error(
             '❌ لم يتم العثور على v3APIToken'
         );
@@ -295,11 +296,6 @@ async function connectService() {
         connection?.port ??
         443;
 
-    // مهم:
-    // لا نفرض web هنا.
-    // نستخدم device الذي تحدده wolf.js
-    // إذا كان موجودًا.
-
     const device =
         connection?.query?.device ||
         WOLF_DEVICE ||
@@ -340,6 +336,7 @@ async function connectService() {
     );
 
     const query = {
+
         token:
             WOLF_TOKEN,
 
@@ -364,6 +361,7 @@ async function connectService() {
         WOLF_IS_APP_CHECK_ENABLED &&
         WOLF_APP_CHECK_TOKEN
     ) {
+
         query.appCheckToken =
             WOLF_APP_CHECK_TOKEN;
     }
@@ -558,13 +556,6 @@ async function waitForAuthorization(
 // ============================================================
 // انتظار Ready
 // ============================================================
-//
-// هذه الإضافة مهمة لأن الكود القديم الناجح كان يعتمد:
-// service.on('ready', ...)
-//
-// هنا ننتظر اكتمال subscriber + handlers
-// قبل استدعاء group event list.
-//
 
 async function waitForServiceReady(
     timeout = 30000
@@ -605,7 +596,7 @@ async function waitForServiceReady(
 }
 
 // ============================================================
-// التحقق
+// التحقق من الحساب
 // ============================================================
 
 async function verifyAccount() {
@@ -647,6 +638,23 @@ async function verifyAccount() {
 // ============================================================
 // جلب الفعاليات
 // ============================================================
+//
+// هنا لا نغيّر طريقة الاتصال.
+// نختبر Event API نفسه.
+//
+// TEST 1:
+// group event list مع groupId رقم
+//
+// TEST 2:
+// group event list مع groupId نص
+//
+// TEST 3:
+// إذا الاثنين فشلوا، نجرب group event create
+//
+// الهدف معرفة:
+// هل المشكلة في LIST فقط؟
+// أم أن Event API كاملًا يرفض الطلب؟
+//
 
 async function getExistingEvents() {
 
@@ -656,47 +664,378 @@ async function getExistingEvents() {
         '🔍 فحص التعارض في الروم...'
     );
 
-    // نفس الاستدعاء الموجود في الكود القديم
-    // الذي أكدت أنه يعمل.
+    // ========================================================
+    // TEST 1
+    // ========================================================
 
-    const listRes =
-        await service.websocket.emit(
-            'group event list',
-            {
-                groupId: GROUP_ID,
-                languageId: 1
-            }
-        );
+    console.log('');
 
     console.log(
-        `📡 Event List Response: ${
-            JSON.stringify(listRes)
-        }`
+        '========================================'
     );
 
-    if (
-        !listRes?.success
-    ) {
+    console.log(
+        '🧪 TEST 1'
+    );
 
-        throw new Error(
-            `❌ فشل الحصول على قائمة الفعاليات: ${
-                JSON.stringify(listRes)
-            }`
+    console.log(
+        '📡 group event list'
+    );
+
+    console.log(
+        '📌 groupId = Number'
+    );
+
+    console.log(
+        '========================================'
+    );
+
+    let listRes1 = null;
+
+    try {
+
+        listRes1 =
+            await service.websocket.emit(
+                'group event list',
+                {
+                    groupId:
+                        GROUP_ID,
+
+                    languageId:
+                        1
+                }
+            );
+
+        console.log(
+            '📡 LIST NUMBER RESPONSE:'
+        );
+
+        console.log(
+            JSON.stringify(
+                listRes1,
+                null,
+                2
+            )
+        );
+
+    } catch (error) {
+
+        console.error(
+            '❌ LIST NUMBER ERROR:'
+        );
+
+        console.error(
+            error?.stack ||
+            error?.message ||
+            error
         );
     }
 
-    const existingEvents =
-        Array.isArray(
-            listRes.body
-        )
-            ? listRes.body
-            : [];
+    // ========================================================
+    // إذا نجح TEST 1
+    // ========================================================
+
+    if (
+        listRes1?.success
+    ) {
+
+        const existingEvents =
+            Array.isArray(
+                listRes1.body
+            )
+                ? listRes1.body
+                : [];
+
+        console.log('');
+
+        console.log(
+            `✅ نجح Event List`
+        );
+
+        console.log(
+            `📋 عدد الفعاليات الموجودة: ${existingEvents.length}`
+        );
+
+        return existingEvents;
+    }
+
+    // ========================================================
+    // TEST 2
+    // ========================================================
+
+    console.log('');
 
     console.log(
-        `📋 عدد الفعاليات الموجودة: ${existingEvents.length}`
+        '========================================'
     );
 
-    return existingEvents;
+    console.log(
+        '🧪 TEST 2'
+    );
+
+    console.log(
+        '📡 group event list'
+    );
+
+    console.log(
+        '📌 groupId = String'
+    );
+
+    console.log(
+        '========================================'
+    );
+
+    let listRes2 = null;
+
+    try {
+
+        listRes2 =
+            await service.websocket.emit(
+                'group event list',
+                {
+                    groupId:
+                        String(GROUP_ID),
+
+                    languageId:
+                        1
+                }
+            );
+
+        console.log(
+            '📡 LIST STRING RESPONSE:'
+        );
+
+        console.log(
+            JSON.stringify(
+                listRes2,
+                null,
+                2
+            )
+        );
+
+    } catch (error) {
+
+        console.error(
+            '❌ LIST STRING ERROR:'
+        );
+
+        console.error(
+            error?.stack ||
+            error?.message ||
+            error
+        );
+    }
+
+    // ========================================================
+    // إذا نجح TEST 2
+    // ========================================================
+
+    if (
+        listRes2?.success
+    ) {
+
+        const existingEvents =
+            Array.isArray(
+                listRes2.body
+            )
+                ? listRes2.body
+                : [];
+
+        console.log('');
+
+        console.log(
+            `✅ نجح Event List باستخدام String`
+        );
+
+        console.log(
+            `📋 عدد الفعاليات الموجودة: ${existingEvents.length}`
+        );
+
+        return existingEvents;
+    }
+
+    // ========================================================
+    // TEST 3
+    // ========================================================
+
+    console.log('');
+
+    console.log(
+        '========================================'
+    );
+
+    console.log(
+        '🧪 TEST 3'
+    );
+
+    console.log(
+        '📡 group event create'
+    );
+
+    console.log(
+        '⚠️ هذا الاختبار سينشئ فعالية فعلية لمدة دقيقة'
+    );
+
+    console.log(
+        '========================================'
+    );
+
+    const testStart =
+        new Date(
+            Date.now() +
+            10 * 60 * 1000
+        );
+
+    const testEnd =
+        new Date(
+            testStart.getTime() +
+            1 * 60 * 1000
+        );
+
+    console.log(
+        `🕘 Test Start: ${testStart.toISOString()}`
+    );
+
+    console.log(
+        `🕘 Test End: ${testEnd.toISOString()}`
+    );
+
+    let createTest = null;
+
+    try {
+
+        createTest =
+            await service.websocket.emit(
+                'group event create',
+                {
+                    groupId:
+                        GROUP_ID,
+
+                    title:
+                        'WOLF EVENT API TEST',
+
+                    startsAt:
+                        testStart.toISOString(),
+
+                    endsAt:
+                        testEnd.toISOString(),
+
+                    category:
+                        1,
+
+                    languageId:
+                        1
+                }
+            );
+
+        console.log(
+            '📡 CREATE TEST RESPONSE:'
+        );
+
+        console.log(
+            JSON.stringify(
+                createTest,
+                null,
+                2
+            )
+        );
+
+    } catch (error) {
+
+        console.error(
+            '❌ CREATE TEST ERROR:'
+        );
+
+        console.error(
+            error?.stack ||
+            error?.message ||
+            error
+        );
+    }
+
+    // ========================================================
+    // إذا نجح CREATE
+    // ========================================================
+
+    if (
+        createTest?.success
+    ) {
+
+        const testId =
+            createTest.body?.id;
+
+        console.log('');
+
+        console.log(
+            '========================================'
+        );
+
+        console.log(
+            '🎯 النتيجة'
+        );
+
+        console.log(
+            '========================================'
+        );
+
+        console.log(
+            '✅ group event create يعمل'
+        );
+
+        console.log(
+            '❌ group event list فقط يرجع 400'
+        );
+
+        console.log(
+            `🆔 Test Event ID: ${testId}`
+        );
+
+        console.log(
+            '========================================'
+        );
+
+        // نعيد القائمة فارغة مؤقتًا
+        // حتى نعرف هل CREATE يعمل أم لا.
+        return [];
+    }
+
+    // ========================================================
+    // كل Event API فشل
+    // ========================================================
+
+    console.log('');
+
+    console.log(
+        '========================================'
+    );
+
+    console.log(
+        '❌ Event API FAILED'
+    );
+
+    console.log(
+        '========================================'
+    );
+
+    console.log(
+        `LIST NUMBER: ${JSON.stringify(listRes1)}`
+    );
+
+    console.log(
+        `LIST STRING: ${JSON.stringify(listRes2)}`
+    );
+
+    console.log(
+        `CREATE TEST: ${JSON.stringify(createTest)}`
+    );
+
+    console.log(
+        '========================================'
+    );
+
+    throw new Error(
+        `❌ Event API يرفض الطلبات. LIST=${JSON.stringify(listRes1)} CREATE=${JSON.stringify(createTest)}`
+    );
 }
 
 // ============================================================
@@ -726,6 +1065,7 @@ function isEventConflicting(
                 Number.isNaN(eStart) ||
                 Number.isNaN(eEnd)
             ) {
+
                 return false;
             }
 
@@ -808,9 +1148,9 @@ async function createEvents() {
             `🕘 ${formatAMPM(startTime)}`
         );
 
-        // ----------------------------------------------------
+        // ====================================================
         // التعارض
-        // ----------------------------------------------------
+        // ====================================================
 
         const isConflicting =
             isEventConflicting(
@@ -859,6 +1199,13 @@ async function createEvents() {
                         }
                     );
 
+                console.log(
+                    '📡 CREATE RESPONSE:',
+                    JSON.stringify(
+                        response
+                    )
+                );
+
                 if (
                     response?.success
                 ) {
@@ -874,9 +1221,8 @@ async function createEvents() {
                             String(eventId)
                         );
 
-                        // حتى لا يتم إنشاء فعالية
-                        // متداخلة مع فعالية أنشأناها
                         existingEvents.push({
+
                             startsAt:
                                 startTime.toISOString(),
 
@@ -1067,10 +1413,6 @@ async function runTask() {
     );
 
     console.log(
-        '✅ تم الانتهاء من رفع الصور'
-    );
-
-    console.log(
         '========================================'
     );
 }
@@ -1083,7 +1425,10 @@ async function shutdown(
     exitCode = 0
 ) {
 
-    if (shuttingDown) {
+    if (
+        shuttingDown
+    ) {
+
         return;
     }
 
@@ -1163,46 +1508,46 @@ async function main() {
     );
 
     console.log(
-        '🎯 Create Events + Upload Images'
+        '🎯 Event API Diagnostic'
     );
 
     console.log(
         '========================================'
     );
 
-    // --------------------------------------------------------
-    // 1. Chrome Profile
-    // --------------------------------------------------------
+    // ========================================================
+    // 1. تحميل Chrome Profile
+    // ========================================================
 
     await loadWolfCredentials();
 
-    // --------------------------------------------------------
-    // 2. WOLF Service
-    // --------------------------------------------------------
+    // ========================================================
+    // 2. إنشاء WOLF Service
+    // ========================================================
 
     createService();
 
-    // --------------------------------------------------------
+    // ========================================================
     // 3. Handlers
-    // --------------------------------------------------------
+    // ========================================================
 
     await initializeHandlers();
 
-    // --------------------------------------------------------
+    // ========================================================
     // 4. Socket
-    // --------------------------------------------------------
+    // ========================================================
 
     await connectService();
 
-    // --------------------------------------------------------
-    // 5. Task
-    // --------------------------------------------------------
+    // ========================================================
+    // 5. المهمة
+    // ========================================================
 
     await runTask();
 
-    // --------------------------------------------------------
+    // ========================================================
     // 6. Finish
-    // --------------------------------------------------------
+    // ========================================================
 
     await shutdown(0);
 }
@@ -1235,11 +1580,15 @@ main().catch(
         );
 
         try {
+
             socket?.disconnect();
+
         } catch {}
 
         try {
+
             await closeSessionBrowser();
+
         } catch {}
 
         process.exit(1);
