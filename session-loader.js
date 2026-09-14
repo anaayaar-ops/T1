@@ -7,7 +7,7 @@ import path from "path";
 
 // يمكن أن يكون:
 // 1) رابط مباشر إلى JSON
-// 2) Google Drive sharing URL
+// 2) رابط Google Drive sharing
 // 3) مسار ملف JSON محلي
 const WOLF_PROFILE_URL =
     process.env.WOLF_PROFILE_URL || "";
@@ -23,8 +23,14 @@ function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// ============================================================
+// Mask sensitive values
+// ============================================================
+
 function mask(value) {
-    if (!value) return "غير موجود";
+    if (!value) {
+        return "غير موجود";
+    }
 
     const text = String(value);
 
@@ -36,42 +42,126 @@ function mask(value) {
 }
 
 // ============================================================
+// Normalize URL
+// ============================================================
+
+function normalizeSource(value) {
+    if (!value) {
+        return "";
+    }
+
+    let source = String(value).trim();
+
+    // إزالة علامات الاقتباس إذا كانت موجودة
+    if (
+        (source.startsWith('"') && source.endsWith('"')) ||
+        (source.startsWith("'") && source.endsWith("'"))
+    ) {
+        source = source.slice(1, -1).trim();
+    }
+
+    // إصلاح:
+    // https:/example.com
+    // إلى:
+    // https://example.com
+
+    if (
+        source.startsWith("https:/") &&
+        !source.startsWith("https://")
+    ) {
+        source = source.replace(/^https:\//, "https://");
+    }
+
+    // إصلاح:
+    // http:/example.com
+    // إلى:
+    // http://example.com
+
+    if (
+        source.startsWith("http:/") &&
+        !source.startsWith("http://")
+    ) {
+        source = source.replace(/^http:\//, "http://");
+    }
+
+    return source;
+}
+
+// ============================================================
 // Google Drive URL -> Direct Download URL
 // ============================================================
 
 function convertGoogleDriveUrl(url) {
-    if (!url) return url;
-
-    // مثال:
-    // https://drive.google.com/file/d/FILE_ID/view?usp=sharing
-
-    const match = url.match(
-        /drive\.google\.com\/file\/d\/([^/]+)/
-    );
-
-    if (match) {
-        const fileId = match[1];
-
-        return `https://drive.usercontent.google.com/download?id=${encodeURIComponent(
-            fileId
-        )}&export=download&confirm=t`;
+    if (!url) {
+        return url;
     }
 
-    // مثال:
+    const source = normalizeSource(url);
+
+    // ========================================================
+    // Google Drive:
+    //
+    // https://drive.google.com/file/d/FILE_ID/view?usp=sharing
+    // ========================================================
+
+    const fileMatch = source.match(
+        /drive\.google\.com\/file\/d\/([^/?#]+)/i
+    );
+
+    if (fileMatch) {
+        const fileId = fileMatch[1];
+
+        return (
+            "https://drive.usercontent.google.com/download" +
+            `?id=${encodeURIComponent(fileId)}` +
+            "&export=download" +
+            "&confirm=t"
+        );
+    }
+
+    // ========================================================
+    // Google Drive:
+    //
     // https://drive.google.com/uc?id=FILE_ID
-    const ucMatch = url.match(
-        /drive\.google\.com\/uc\?.*id=([^&]+)/
+    // ========================================================
+
+    const ucMatch = source.match(
+        /drive\.google\.com\/uc\?[^#]*id=([^&#]+)/i
     );
 
     if (ucMatch) {
         const fileId = ucMatch[1];
 
-        return `https://drive.usercontent.google.com/download?id=${encodeURIComponent(
-            fileId
-        )}&export=download&confirm=t`;
+        return (
+            "https://drive.usercontent.google.com/download" +
+            `?id=${encodeURIComponent(fileId)}` +
+            "&export=download" +
+            "&confirm=t"
+        );
     }
 
-    return url;
+    // ========================================================
+    // Google Drive:
+    //
+    // https://drive.google.com/open?id=FILE_ID
+    // ========================================================
+
+    const openMatch = source.match(
+        /drive\.google\.com\/open\?[^#]*id=([^&#]+)/i
+    );
+
+    if (openMatch) {
+        const fileId = openMatch[1];
+
+        return (
+            "https://drive.usercontent.google.com/download" +
+            `?id=${encodeURIComponent(fileId)}` +
+            "&export=download" +
+            "&confirm=t"
+        );
+    }
+
+    return source;
 }
 
 // ============================================================
@@ -79,24 +169,47 @@ function convertGoogleDriveUrl(url) {
 // ============================================================
 
 async function readJsonFromUrl(url) {
-    const directUrl = convertGoogleDriveUrl(url);
+    const source = normalizeSource(url);
+    const directUrl = convertGoogleDriveUrl(source);
 
-    console.log("🌐 تحميل WOLF session JSON...");
-    console.log(`🔗 المصدر: ${url}`);
+    console.log("");
+    console.log("========================================");
+    console.log("🌐 WOLF Session JSON Download");
+    console.log("========================================");
 
-    if (directUrl !== url) {
-        console.log("☁️ تم تحويل رابط Google Drive إلى رابط تحميل مباشر");
+    console.log(`🔗 المصدر: ${source}`);
+
+    if (directUrl !== source) {
+        console.log(
+            "☁️ تم تحويل رابط Google Drive إلى رابط تحميل مباشر"
+        );
     }
 
-    const response = await fetch(directUrl, {
-        method: "GET",
-        redirect: "follow",
-        headers: {
-            "User-Agent":
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/152 Safari/537.36",
-            "Accept": "application/json,text/plain,*/*"
-        }
-    });
+    console.log("📡 جاري تحميل JSON...");
+
+    let response;
+
+    try {
+        response = await fetch(directUrl, {
+            method: "GET",
+            redirect: "follow",
+            headers: {
+                "User-Agent":
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/152 Safari/537.36",
+
+                "Accept":
+                    "application/json,text/plain,*/*"
+            }
+        });
+    } catch (error) {
+        throw new Error(
+            `فشل الاتصال برابط WOLF session: ${error.message}`
+        );
+    }
+
+    console.log(
+        `📡 HTTP Status: ${response.status}`
+    );
 
     if (!response.ok) {
         throw new Error(
@@ -104,17 +217,51 @@ async function readJsonFromUrl(url) {
         );
     }
 
-    const text = await response.text();
+    const finalUrl =
+        response.url || directUrl;
 
-    if (!text.trim()) {
-        throw new Error("ملف WOLF session JSON فارغ");
+    console.log(
+        `🔗 الرابط النهائي: ${finalUrl}`
+    );
+
+    const text =
+        await response.text();
+
+    if (!text || !text.trim()) {
+        throw new Error(
+            "ملف WOLF session JSON فارغ"
+        );
     }
+
+    console.log(
+        `📦 حجم البيانات المستلمة: ${Buffer.byteLength(
+            text,
+            "utf8"
+        )} bytes`
+    );
+
+    // ========================================================
+    // Parse JSON
+    // ========================================================
 
     try {
         return JSON.parse(text);
-    } catch {
+    } catch (error) {
+        // غالبًا يعني أن Google Drive أعاد HTML
+        const preview =
+            text
+                .replace(/\s+/g, " ")
+                .slice(0, 200);
+
+        console.log("");
+        console.log(
+            "⚠️ بداية البيانات المستلمة:"
+        );
+        console.log(preview);
+
         throw new Error(
-            "الملف الذي تم تحميله ليس JSON صالحًا"
+            "الملف الذي تم تحميله ليس JSON صالحًا. " +
+            "تأكد أن رابط Google Drive يشير إلى ملف JSON وأن الملف متاح للتنزيل."
         );
     }
 }
@@ -124,10 +271,17 @@ async function readJsonFromUrl(url) {
 // ============================================================
 
 function readJsonFromFile(filePath) {
-    const absolutePath = path.resolve(filePath);
+    const absolutePath =
+        path.resolve(filePath);
 
-    console.log("📁 قراءة WOLF session JSON من ملف محلي:");
-    console.log(absolutePath);
+    console.log("");
+    console.log("========================================");
+    console.log("📁 قراءة WOLF session JSON من ملف محلي");
+    console.log("========================================");
+
+    console.log(
+        absolutePath
+    );
 
     if (!fs.existsSync(absolutePath)) {
         throw new Error(
@@ -135,14 +289,33 @@ function readJsonFromFile(filePath) {
         );
     }
 
-    const text = fs.readFileSync(
-        absolutePath,
-        "utf8"
-    );
+    const stats =
+        fs.statSync(absolutePath);
 
-    if (!text.trim()) {
-        throw new Error("ملف WOLF session JSON فارغ");
+    if (!stats.isFile()) {
+        throw new Error(
+            `المسار ليس ملفًا: ${absolutePath}`
+        );
     }
+
+    const text =
+        fs.readFileSync(
+            absolutePath,
+            "utf8"
+        );
+
+    if (!text || !text.trim()) {
+        throw new Error(
+            "ملف WOLF session JSON فارغ"
+        );
+    }
+
+    console.log(
+        `📦 حجم الملف: ${Buffer.byteLength(
+            text,
+            "utf8"
+        )} bytes`
+    );
 
     try {
         return JSON.parse(text);
@@ -164,28 +337,56 @@ async function loadSessionJson() {
         );
     }
 
-    // إذا كان مسار ملف محلي
-    if (
-        WOLF_PROFILE_URL.startsWith(".") ||
-        WOLF_PROFILE_URL.startsWith("/") ||
-        WOLF_PROFILE_URL.includes(":\\") ||
-        WOLF_PROFILE_URL.includes(":/")
-    ) {
-        return readJsonFromFile(WOLF_PROFILE_URL);
-    }
+    // ========================================================
+    // Normalize source
+    // ========================================================
 
-    // إذا كان رابط
-    if (
-        WOLF_PROFILE_URL.startsWith("http://") ||
-        WOLF_PROFILE_URL.startsWith("https://")
-    ) {
-        return await readJsonFromUrl(
+    const source =
+        normalizeSource(
             WOLF_PROFILE_URL
+        );
+
+    console.log("");
+    console.log("========================================");
+    console.log("🔐 WOLF Session Source");
+    console.log("========================================");
+
+    // لا نطبع الرابط كاملًا لحماية الـ Secret
+    if (
+        source.startsWith("https://") ||
+        source.startsWith("http://")
+    ) {
+        console.log(
+            "🌐 نوع المصدر: رابط HTTPS/HTTP"
+        );
+    } else {
+        console.log(
+            "📁 نوع المصدر: ملف محلي"
         );
     }
 
-    // محاولة اعتباره ملفًا محليًا
-    return readJsonFromFile(WOLF_PROFILE_URL);
+    console.log("========================================");
+
+    // ========================================================
+    // URL
+    // ========================================================
+
+    if (
+        source.startsWith("http://") ||
+        source.startsWith("https://")
+    ) {
+        return await readJsonFromUrl(
+            source
+        );
+    }
+
+    // ========================================================
+    // Local file
+    // ========================================================
+
+    return readJsonFromFile(
+        source
+    );
 }
 
 // ============================================================
@@ -193,14 +394,18 @@ async function loadSessionJson() {
 // ============================================================
 
 function extractCredentials(session) {
-    if (!session || typeof session !== "object") {
+    if (
+        !session ||
+        typeof session !== "object" ||
+        Array.isArray(session)
+    ) {
         throw new Error(
             "بيانات WOLF session غير صالحة"
         );
     }
 
     /*
-     * الشكل المتوقع للملف:
+     * الشكل المتوقع:
      *
      * {
      *   "localStorage": {
@@ -209,7 +414,7 @@ function extractCredentials(session) {
      *   }
      * }
      *
-     * ونسمح أيضًا إذا كانت القيم مباشرة:
+     * أو:
      *
      * {
      *   "v3APIToken": "...",
@@ -220,34 +425,65 @@ function extractCredentials(session) {
     const localStorage =
         session.localStorage || {};
 
+    // ========================================================
+    // v3APIToken
+    // ========================================================
+
     const token =
         localStorage.v3APIToken ??
         session.v3APIToken ??
         null;
+
+    // ========================================================
+    // appCheckToken
+    // ========================================================
 
     const appCheckToken =
         localStorage.appCheckToken ??
         session.appCheckToken ??
         null;
 
-    if (!token) {
+    // ========================================================
+    // Validate token
+    // ========================================================
+
+    if (
+        token === null ||
+        token === undefined ||
+        String(token).trim() === ""
+    ) {
         throw new Error(
             "❌ لم يتم العثور على v3APIToken داخل JSON"
         );
     }
 
-    if (!appCheckToken) {
+    // ========================================================
+    // Validate App Check
+    // ========================================================
+
+    if (
+        appCheckToken === null ||
+        appCheckToken === undefined ||
+        String(appCheckToken).trim() === ""
+    ) {
         throw new Error(
             "❌ لم يتم العثور على appCheckToken داخل JSON"
         );
     }
 
-    return {
-        token: String(token),
-        appCheckToken: String(appCheckToken),
+    // ========================================================
+    // Return credentials
+    // ========================================================
 
-        // ثابت حسب طلبك
-        device: DEFAULT_DEVICE,
+    return {
+        token: String(token).trim(),
+
+        appCheckToken:
+            String(appCheckToken).trim(),
+
+        device:
+            DEFAULT_DEVICE,
+
         isAppCheckEnabled:
             DEFAULT_APP_CHECK_ENABLED
     };
@@ -263,13 +499,30 @@ export async function loadSession() {
     console.log("🐺 WOLF Session Loader - JSON");
     console.log("========================================");
 
+    // ========================================================
+    // Load JSON
+    // ========================================================
+
     const session =
         await loadSessionJson();
 
-    console.log("✅ تم تحميل JSON بنجاح");
+    console.log("");
+    console.log(
+        "✅ تم تحميل WOLF session JSON بنجاح"
+    );
+
+    // ========================================================
+    // Extract credentials
+    // ========================================================
 
     const credentials =
-        extractCredentials(session);
+        extractCredentials(
+            session
+        );
+
+    // ========================================================
+    // Print safe information
+    // ========================================================
 
     console.log("");
     console.log("========================================");
@@ -281,7 +534,9 @@ export async function loadSession() {
     );
 
     console.log(
-        `🔐 v3APIToken: ${mask(credentials.token)}`
+        `🔐 v3APIToken: ${mask(
+            credentials.token
+        )}`
     );
 
     console.log(
@@ -289,7 +544,9 @@ export async function loadSession() {
     );
 
     console.log(
-        `🛡️ appCheckToken: ${mask(credentials.appCheckToken)}`
+        `🛡️ appCheckToken: ${mask(
+            credentials.appCheckToken
+        )}`
     );
 
     console.log(
@@ -300,7 +557,9 @@ export async function loadSession() {
         `🛡️ DEFAULT_APP_CHECK_ENABLED: ${credentials.isAppCheckEnabled}`
     );
 
-    console.log("========================================");
+    console.log(
+        "========================================"
+    );
 
     return credentials;
 }
