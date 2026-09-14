@@ -8,6 +8,10 @@ import {
     closeSessionBrowser
 } from './session-loader.js';
 
+import {
+    Command
+} from './node_modules/wolf.js/src/constants/index.js';
+
 const { WOLF, OnlineState } = wolfjs;
 
 const GROUP_ID = 18432094;
@@ -534,6 +538,7 @@ async function connectUsingChromeProfile(
 
 // ============================================================
 // جلب الفعاليات الموجودة
+// بدون استخدام event.group.getList()
 // ============================================================
 
 async function getExistingEvents() {
@@ -547,47 +552,168 @@ async function getExistingEvents() {
         `🏠 GROUP_ID: ${GROUP_ID}`
     );
 
-    const events =
-        await service.event.group.getList(
-            GROUP_ID,
-            true,
-            true
-        );
-
-    if (!Array.isArray(events)) {
+    try {
 
         console.log(
-            '⚠️ نتيجة قائمة الفعاليات ليست Array.'
+            '📡 إرسال GROUP_EVENT_LIST...'
         );
 
-        console.log(events);
+        const timeoutPromise =
+            new Promise((_, reject) => {
+
+                setTimeout(() => {
+
+                    reject(
+                        new Error(
+                            'انتهت مهلة جلب قائمة الفعاليات بعد 30 ثانية.'
+                        )
+                    );
+
+                }, 30000);
+
+            });
+
+        const requestPromise =
+            service.websocket.emit(
+                Command.GROUP_EVENT_LIST,
+                {
+                    id: Number(GROUP_ID),
+                    subscribe: true,
+                    offset: 0,
+                    limit:
+                        service._frameworkConfig
+                            ?.batching
+                            ?.length || 100
+                }
+            );
+
+        const response =
+            await Promise.race([
+                requestPromise,
+                timeoutPromise
+            ]);
+
+        console.log(
+            '📦 تم استلام رد GROUP_EVENT_LIST'
+        );
+
+        if (!response) {
+
+            console.log(
+                '⚠️ لم يتم استلام Response.'
+            );
+
+            return false;
+        }
+
+        console.log(
+            '📦 Success:',
+            response.success
+        );
+
+        if (!response.success) {
+
+            console.log(
+                '⚠️ فشل طلب قائمة الفعاليات.'
+            );
+
+            console.log(
+                JSON.stringify(
+                    response,
+                    null,
+                    2
+                )
+            );
+
+            return false;
+        }
+
+        const body =
+            Array.isArray(response.body)
+                ? response.body
+                : [];
+
+        // ====================================================
+        // لا توجد فعاليات
+        // ====================================================
+
+        if (body.length === 0) {
+
+            console.log('');
+            console.log(
+                'ℹ️ لا توجد فعاليات في الروم.'
+            );
+
+            console.log(
+                '↩️ سيتم إرجاع false.'
+            );
+
+            return false;
+        }
+
+        console.log(
+            `📋 تم العثور على ${body.length} فعالية.`
+        );
+
+        // ====================================================
+        // جلب IDs
+        // ====================================================
+
+        const ids =
+            body
+                .map(event => event?.id)
+                .filter(Boolean);
+
+        if (!ids.length) {
+
+            console.log(
+                '⚠️ لم يتم العثور على Event IDs.'
+            );
+
+            return false;
+        }
+
+        console.log(
+            `🔎 جاري جلب تفاصيل ${ids.length} فعالية...`
+        );
+
+        // ====================================================
+        // جلب تفاصيل الفعاليات
+        // ====================================================
+
+        const details =
+            await service.event.getByIds(ids);
+
+        if (!Array.isArray(details)) {
+
+            console.log(
+                '⚠️ تفاصيل الفعاليات ليست Array.'
+            );
+
+            return false;
+        }
+
+        console.log(
+            `✅ تم جلب ${details.length} فعالية موجودة.`
+        );
+
+        return details;
+
+    } catch (err) {
+
+        console.error('');
+        console.error(
+            '❌ خطأ أثناء جلب فعاليات الروم:'
+        );
+
+        console.error(
+            err?.stack ||
+            err?.message ||
+            err
+        );
 
         return false;
     }
-
-    // ========================================================
-    // إذا لم توجد أي فعاليات
-    // ========================================================
-
-    if (events.length === 0) {
-
-        console.log('');
-        console.log(
-            'ℹ️ لا توجد فعاليات في الروم.'
-        );
-
-        console.log(
-            '↩️ سيتم إرجاع false.'
-        );
-
-        return false;
-    }
-
-    console.log(
-        `✅ تم جلب ${events.length} فعالية موجودة.`
-    );
-
-    return events;
 }
 
 // ============================================================
@@ -677,6 +803,10 @@ async function createEvents(
 
     let startTime =
         new Date(START_TIME);
+
+    // ========================================================
+    // نستخدم فقط الفعاليات التي تنتهي بعد بداية الجدول
+    // ========================================================
 
     const relevantEvents =
         existingEvents.filter(
@@ -822,6 +952,9 @@ async function createEvents(
                                 startTime
                             )}`
                         );
+
+                        // منع التعارض مع الفعاليات
+                        // التي أنشأناها أثناء نفس التشغيل
 
                         relevantEvents.push({
 
