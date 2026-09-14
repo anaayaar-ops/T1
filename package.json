@@ -1,18 +1,14 @@
 {
   "name": "service-runner",
   "version": "1.0.0",
-  "description": "WOLF runtime service",
   "type": "module",
-  "private": true,
   "scripts": {
     "start": "node check-wolf.js"
   },
   "dependencies": {
-    "dotenv": "^16.4.5",
-    "sharp": "^0.33.5",
-    "wolf.js": "2.7.10",
+    "adm-zip": "^0.5.16",
+    "playwright": "^1.55.0",
     "socket.io-client": "^4.8.1",
-    "ws": "^8.18.0",
-    "playwright": "^1.55.0"
+    "wolf.js": "2.7.10"
   }
 }
