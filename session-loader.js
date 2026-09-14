@@ -17,46 +17,65 @@ function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function downloadFile(url, outputPath, redirectCount = 0) {
+function getGoogleDriveFileId(url) {
+    if (!url) return null;
+
+    const match =
+        url.match(/\/file\/d\/([^/]+)/) ||
+        url.match(/[?&]id=([^&]+)/);
+
+    return match ? match[1] : null;
+}
+
+// ============================================================
+// HTTP GET
+// ============================================================
+
+function httpsGet(url, headers = {}, redirectCount = 0) {
     return new Promise((resolve, reject) => {
         if (redirectCount > 10) {
-            reject(new Error("Too many redirects while downloading profile"));
+            reject(
+                new Error(
+                    "❌ Too many redirects while downloading file"
+                )
+            );
             return;
         }
-
-        console.log(`🌐 تحميل من: ${url}`);
 
         const request = https.get(
             url,
             {
                 headers: {
                     "User-Agent":
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/140 Safari/537.36",
+                        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140 Safari/537.36",
                     "Accept":
-                        "application/zip,application/octet-stream,*/*"
+                        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    ...headers
                 }
             },
             response => {
-                const statusCode = response.statusCode || 0;
+                const status = response.statusCode || 0;
 
                 // Redirect
                 if (
-                    statusCode >= 300 &&
-                    statusCode < 400 &&
+                    status >= 300 &&
+                    status < 400 &&
                     response.headers.location
                 ) {
-                    const redirectUrl = new URL(
+                    const nextUrl = new URL(
                         response.headers.location,
                         url
                     ).toString();
 
                     response.resume();
 
-                    console.log(`↪️ Redirect -> ${redirectUrl}`);
+                    console.log(
+                        `↪️ Redirect -> ${nextUrl}`
+                    );
 
-                    downloadFile(
-                        redirectUrl,
-                        outputPath,
+                    httpsGet(
+                        nextUrl,
+                        headers,
                         redirectCount + 1
                     )
                         .then(resolve)
@@ -65,140 +84,410 @@ function downloadFile(url, outputPath, redirectCount = 0) {
                     return;
                 }
 
-                if (statusCode < 200 || statusCode >= 300) {
-                    response.resume();
-
-                    reject(
-                        new Error(
-                            `HTTP ${statusCode} while downloading profile`
-                        )
-                    );
-
-                    return;
-                }
-
-                const file = fs.createWriteStream(outputPath);
-
-                let totalBytes = 0;
+                const chunks = [];
 
                 response.on("data", chunk => {
-                    totalBytes += chunk.length;
+                    chunks.push(chunk);
                 });
 
-                response.pipe(file);
-
-                file.on("finish", () => {
-                    file.close(() => {
-                        console.log(
-                            `📦 تم تنزيل الملف: ${(totalBytes / 1024 / 1024).toFixed(
-                                2
-                            )} MB`
-                        );
-
-                        resolve({
-                            bytes: totalBytes,
-                            contentType:
-                                response.headers["content-type"] || ""
-                        });
+                response.on("end", () => {
+                    resolve({
+                        status,
+                        headers: response.headers,
+                        body: Buffer.concat(chunks)
                     });
-                });
-
-                file.on("error", error => {
-                    try {
-                        file.close();
-                    } catch {}
-
-                    reject(error);
                 });
             }
         );
 
         request.on("error", reject);
 
-        request.setTimeout(120000, () => {
-            request.destroy(
-                new Error("Profile download timeout")
-            );
-        });
+        request.setTimeout(
+            180000,
+            () => {
+                request.destroy(
+                    new Error(
+                        "❌ Download timeout"
+                    )
+                );
+            }
+        );
     });
 }
 
 // ============================================================
-// ZIP Validation
+// Google Drive Download
 // ============================================================
 
-function validateZipFile(zipPath, metadata = {}) {
-    if (!fs.existsSync(zipPath)) {
-        throw new Error("❌ ملف Profile غير موجود بعد التحميل");
-    }
-
-    const stat = fs.statSync(zipPath);
-
+async function downloadGoogleDriveFile(
+    fileId,
+    outputPath
+) {
     console.log(
-        `📏 حجم Profile: ${(stat.size / 1024 / 1024).toFixed(2)} MB`
+        "☁️ Google Drive detected"
     );
 
     console.log(
-        `📄 Content-Type: ${
-            metadata.contentType || "غير معروف"
-        }`
+        `🆔 File ID: ${fileId}`
     );
 
-    if (stat.size === 0) {
-        throw new Error(
-            "❌ Profile ZIP فارغ — WOLF_PROFILE_URL لم يرجع ملفًا"
+    // First request
+    const initialUrl =
+        `https://drive.usercontent.google.com/download?id=${encodeURIComponent(
+            fileId
+        )}&export=download`;
+
+    console.log(
+        "🌐 طلب تنزيل Google Drive..."
+    );
+
+    const response =
+        await httpsGet(initialUrl);
+
+    console.log(
+        `📡 Google Drive HTTP: ${response.status}`
+    );
+
+    const contentType =
+        String(
+            response.headers["content-type"] || ""
+        ).toLowerCase();
+
+    // --------------------------------------------------------
+    // Direct ZIP
+    // --------------------------------------------------------
+
+    if (
+        response.body.length >= 4 &&
+        response.body.subarray(0, 4).toString("hex") ===
+            "504b0304"
+    ) {
+        fs.writeFileSync(
+            outputPath,
+            response.body
         );
+
+        console.log(
+            `📦 تم تنزيل ZIP مباشرة: ${(
+                response.body.length /
+                1024 /
+                1024
+            ).toFixed(2)} MB`
+        );
+
+        return {
+            bytes: response.body.length,
+            contentType:
+                contentType || "application/zip"
+        };
     }
 
-    // ZIP files normally start with PK
-    const fd = fs.openSync(zipPath, "r");
+    // --------------------------------------------------------
+    // Virus Scan Confirmation
+    // --------------------------------------------------------
 
-    try {
-        const header = Buffer.alloc(4);
+    const html =
+        response.body.toString(
+            "utf8"
+        );
 
-        fs.readSync(fd, header, 0, 4, 0);
+    if (
+        html.includes(
+            "Google Drive - Virus scan warning"
+        ) ||
+        html.includes(
+            "virus scan warning"
+        ) ||
+        html.includes(
+            "confirm="
+        )
+    ) {
+        console.log(
+            "⚠️ Google Drive طلب تأكيد فحص الفيروسات"
+        );
 
-        const signature = header.toString("hex");
+        // Find confirmation token
+        const patterns = [
+            /name="confirm"\s+value="([^"]+)"/i,
+            /name='confirm'\s+value='([^']+)'/i,
+            /confirm=([a-zA-Z0-9_-]+)/i
+        ];
 
-        console.log(`🔎 ZIP Signature: ${signature}`);
+        let confirmToken = null;
+
+        for (const pattern of patterns) {
+            const match =
+                html.match(pattern);
+
+            if (match?.[1]) {
+                confirmToken = match[1];
+                break;
+            }
+        }
+
+        // Find form action
+        let action = null;
+
+        const formMatch =
+            html.match(
+                /<form[^>]+action="([^"]+)"/i
+            );
+
+        if (formMatch?.[1]) {
+            action = formMatch[1];
+        }
+
+        // ----------------------------------------------------
+        // Build confirmation URL
+        // ----------------------------------------------------
+
+        let confirmUrl;
+
+        if (action) {
+            confirmUrl =
+                new URL(
+                    action,
+                    initialUrl
+                ).toString();
+
+            const separator =
+                confirmUrl.includes("?")
+                    ? "&"
+                    : "?";
+
+            confirmUrl +=
+                `${separator}id=${encodeURIComponent(
+                    fileId
+                )}&export=download`;
+
+            if (confirmToken) {
+                confirmUrl +=
+                    `&confirm=${encodeURIComponent(
+                        confirmToken
+                    )}`;
+            }
+        } else {
+            confirmUrl =
+                `https://drive.usercontent.google.com/download?id=${encodeURIComponent(
+                    fileId
+                )}&export=download&confirm=${
+                    confirmToken || "t"
+                }`;
+        }
+
+        console.log(
+            "🔐 إرسال تأكيد Google Drive..."
+        );
+
+        const confirmed =
+            await httpsGet(
+                confirmUrl
+            );
+
+        const confirmedBody =
+            confirmed.body;
+
+        const signature =
+            confirmedBody
+                .subarray(0, 4)
+                .toString("hex");
 
         if (
             signature !== "504b0304" &&
             signature !== "504b0506" &&
             signature !== "504b0708"
         ) {
-            // Read first bytes for diagnostics
-            const previewBuffer = Buffer.alloc(
-                Math.min(200, stat.size)
+            console.log(
+                `⚠️ Google Drive ما زال يرجع ${
+                    confirmed.headers["content-type"] ||
+                    "بيانات غير معروفة"
+                }`
             );
 
-            fs.readSync(
-                fd,
-                previewBuffer,
-                0,
-                previewBuffer.length,
-                0
-            );
-
-            const preview = previewBuffer
-                .toString("utf8")
-                .replace(/\s+/g, " ")
-                .slice(0, 200);
+            const preview =
+                confirmedBody
+                    .toString("utf8")
+                    .replace(/\s+/g, " ")
+                    .slice(0, 300);
 
             console.log(
-                `⚠️ بداية الملف ليست ZIP: ${preview}`
+                `🔎 بداية الرد: ${preview}`
             );
 
             throw new Error(
-                "❌ WOLF_PROFILE_URL لا يرجع ZIP صالح. " +
-                "غالبًا الرابط يرجع HTML أو صفحة تحميل بدل ملف ZIP."
+                "❌ Google Drive لم يسمح بتنزيل ZIP بعد تأكيد Virus Scan."
             );
         }
+
+        fs.writeFileSync(
+            outputPath,
+            confirmedBody
+        );
+
+        console.log(
+            `📦 تم تنزيل ZIP بعد التأكيد: ${(
+                confirmedBody.length /
+                1024 /
+                1024
+            ).toFixed(2)} MB`
+        );
+
+        return {
+            bytes: confirmedBody.length,
+            contentType:
+                confirmed.headers["content-type"] ||
+                "application/zip"
+        };
+    }
+
+    // --------------------------------------------------------
+    // Unknown response
+    // --------------------------------------------------------
+
+    console.log(
+        `📄 Content-Type: ${contentType}`
+    );
+
+    const preview =
+        html
+            .replace(/\s+/g, " ")
+            .slice(0, 500);
+
+    console.log(
+        `🔎 بداية الرد: ${preview}`
+    );
+
+    throw new Error(
+        "❌ Google Drive لم يرجع ملف ZIP."
+    );
+}
+
+// ============================================================
+// Generic Download
+// ============================================================
+
+async function downloadFile(
+    url,
+    outputPath
+) {
+    const googleDriveId =
+        getGoogleDriveFileId(url);
+
+    if (googleDriveId) {
+        return await downloadGoogleDriveFile(
+            googleDriveId,
+            outputPath
+        );
+    }
+
+    console.log(
+        `🌐 تحميل من: ${url}`
+    );
+
+    const response =
+        await httpsGet(url);
+
+    if (
+        response.status < 200 ||
+        response.status >= 300
+    ) {
+        throw new Error(
+            `❌ HTTP ${response.status}`
+        );
+    }
+
+    fs.writeFileSync(
+        outputPath,
+        response.body
+    );
+
+    return {
+        bytes: response.body.length,
+        contentType:
+            response.headers["content-type"] ||
+            ""
+    };
+}
+
+// ============================================================
+// ZIP Validation
+// ============================================================
+
+function validateZipFile(
+    zipPath,
+    metadata = {}
+) {
+    if (!fs.existsSync(zipPath)) {
+        throw new Error(
+            "❌ ملف Profile غير موجود"
+        );
+    }
+
+    const stat =
+        fs.statSync(zipPath);
+
+    console.log(
+        `📏 حجم Profile: ${(
+            stat.size /
+            1024 /
+            1024
+        ).toFixed(2)} MB`
+    );
+
+    console.log(
+        `📄 Content-Type: ${
+            metadata.contentType ||
+            "غير معروف"
+        }`
+    );
+
+    if (stat.size === 0) {
+        throw new Error(
+            "❌ Profile ZIP فارغ"
+        );
+    }
+
+    const fd =
+        fs.openSync(
+            zipPath,
+            "r"
+        );
+
+    try {
+        const header =
+            Buffer.alloc(4);
+
+        fs.readSync(
+            fd,
+            header,
+            0,
+            4,
+            0
+        );
+
+        const signature =
+            header.toString("hex");
+
+        console.log(
+            `🔎 ZIP Signature: ${signature}`
+        );
+
+        if (
+            signature !== "504b0304" &&
+            signature !== "504b0506" &&
+            signature !== "504b0708"
+        ) {
+            throw new Error(
+                "❌ الملف الذي تم تنزيله ليس ZIP صالحًا."
+            );
+        }
+
+        console.log(
+            "✅ ZIP signature صحيح"
+        );
     } finally {
         fs.closeSync(fd);
     }
-
-    console.log("✅ ZIP signature صحيح");
 }
 
 // ============================================================
@@ -206,23 +495,22 @@ function validateZipFile(zipPath, metadata = {}) {
 // ============================================================
 
 function cleanChromeLocks(dir) {
-    const lockFiles = [
+    const files = [
         "SingletonLock",
         "SingletonSocket",
         "SingletonCookie",
         "DevToolsActivePort"
     ];
 
-    for (const file of lockFiles) {
-        const fullPath = path.join(dir, file);
-
+    for (const file of files) {
         try {
-            if (fs.existsSync(fullPath)) {
-                fs.rmSync(fullPath, {
+            fs.rmSync(
+                path.join(dir, file),
+                {
                     recursive: true,
                     force: true
-                });
-            }
+                }
+            );
         } catch {}
     }
 }
@@ -231,26 +519,27 @@ function findUserDataDir(rootDir) {
     const candidates = [
         rootDir,
         path.join(rootDir, "User Data"),
-        path.join(rootDir, "Chrome User Data"),
-        path.join(rootDir, "Default")
+        path.join(rootDir, "Chrome User Data")
     ];
 
     for (const candidate of candidates) {
-        if (!fs.existsSync(candidate)) continue;
-
-        const localState = path.join(
-            candidate,
-            "Local State"
-        );
-
-        const defaultDir = path.join(
-            candidate,
-            "Default"
-        );
+        if (!fs.existsSync(candidate)) {
+            continue;
+        }
 
         if (
-            fs.existsSync(localState) ||
-            fs.existsSync(defaultDir)
+            fs.existsSync(
+                path.join(
+                    candidate,
+                    "Local State"
+                )
+            ) ||
+            fs.existsSync(
+                path.join(
+                    candidate,
+                    "Default"
+                )
+            )
         ) {
             return candidate;
         }
@@ -259,48 +548,55 @@ function findUserDataDir(rootDir) {
     return rootDir;
 }
 
-async function extractProfile(zipPath, destination) {
-    console.log("📦 جاري فك Chrome Profile...");
+async function extractProfile(
+    zipPath,
+    destination
+) {
+    console.log(
+        "📦 جاري فك Chrome Profile..."
+    );
 
     validateZipFile(zipPath);
 
-    let zip;
+    const zip =
+        new AdmZip(zipPath);
 
-    try {
-        zip = new AdmZip(zipPath);
-    } catch (error) {
-        throw new Error(
-            `❌ تعذر فتح ZIP بعد التحقق منه: ${
-                error?.message || error
-            }`
-        );
-    }
-
-    const entries = zip.getEntries();
+    const entries =
+        zip.getEntries();
 
     if (!entries.length) {
         throw new Error(
-            "❌ ZIP لا يحتوي على أي ملفات"
+            "❌ ZIP لا يحتوي على ملفات"
         );
     }
 
     console.log(
-        `📁 عدد ملفات Profile داخل ZIP: ${entries.length}`
+        `📁 عدد ملفات Profile: ${entries.length}`
     );
 
-    fs.mkdirSync(destination, {
-        recursive: true
-    });
+    fs.mkdirSync(
+        destination,
+        {
+            recursive: true
+        }
+    );
 
-    zip.extractAllTo(destination, true);
+    zip.extractAllTo(
+        destination,
+        true
+    );
 
-    console.log("✅ تم فك Chrome Profile");
+    console.log(
+        "✅ تم فك Chrome Profile"
+    );
 
-    return findUserDataDir(destination);
+    return findUserDataDir(
+        destination
+    );
 }
 
 // ============================================================
-// Read WOLF Tokens
+// WOLF Credentials
 // ============================================================
 
 async function readWolfTokens(page) {
@@ -312,15 +608,23 @@ async function readWolfTokens(page) {
 
         const entries = [];
 
-        for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i);
+        for (
+            let i = 0;
+            i < localStorage.length;
+            i++
+        ) {
+            const key =
+                localStorage.key(i);
 
             if (!key) continue;
 
             let value = null;
 
             try {
-                value = localStorage.getItem(key);
+                value =
+                    localStorage.getItem(
+                        key
+                    );
             } catch {}
 
             entries.push({
@@ -328,13 +632,18 @@ async function readWolfTokens(page) {
                 value
             });
 
-            const lowerKey = key.toLowerCase();
+            const lower =
+                key.toLowerCase();
 
             if (
                 !result.token &&
                 (
-                    lowerKey.includes("v3apitoken") ||
-                    lowerKey.includes("v3_api_token")
+                    lower.includes(
+                        "v3apitoken"
+                    ) ||
+                    lower.includes(
+                        "v3_api_token"
+                    )
                 )
             ) {
                 result.token = value;
@@ -343,48 +652,16 @@ async function readWolfTokens(page) {
             if (
                 !result.appCheckToken &&
                 (
-                    lowerKey.includes("appchecktoken") ||
-                    lowerKey.includes("app_check_token")
+                    lower.includes(
+                        "appchecktoken"
+                    ) ||
+                    lower.includes(
+                        "app_check_token"
+                    )
                 )
             ) {
-                result.appCheckToken = value;
-            }
-        }
-
-        // Fallback search
-        if (!result.token) {
-            for (const item of entries) {
-                if (!item.value) continue;
-
-                const value = String(item.value);
-
-                if (
-                    value.length > 100 &&
-                    (
-                        value.includes("eyJ") ||
-                        value.toLowerCase().includes("apitoken")
-                    )
-                ) {
-                    result.token = value;
-                    break;
-                }
-            }
-        }
-
-        // Fallback AppCheck
-        if (!result.appCheckToken) {
-            for (const item of entries) {
-                if (!item.value) continue;
-
-                const value = String(item.value);
-
-                if (
-                    value.length > 200 &&
-                    value.toLowerCase().includes("appcheck")
-                ) {
-                    result.appCheckToken = value;
-                    break;
-                }
+                result.appCheckToken =
+                    value;
             }
         }
 
@@ -397,54 +674,68 @@ async function readWolfTokens(page) {
 // ============================================================
 
 export async function loadSession() {
-    const profileUrl = process.env.WOLF_PROFILE_URL;
+    const profileUrl =
+        process.env.WOLF_PROFILE_URL;
 
     if (!profileUrl) {
         throw new Error(
-            "❌ WOLF_PROFILE_URL غير موجود في GitHub Secrets"
+            "❌ WOLF_PROFILE_URL غير موجود"
         );
     }
 
-    console.log("🐺 بدء تحميل WOLF Profile...");
-
-    const tempRoot = fs.mkdtempSync(
-        path.join(
-            os.tmpdir(),
-            "wolf-profile-"
-        )
+    console.log(
+        "🐺 بدء تحميل WOLF Profile..."
     );
 
-    const zipPath = path.join(
-        tempRoot,
-        "wolf-profile.zip"
-    );
-
-    const extractPath = path.join(
-        tempRoot,
-        "profile"
-    );
-
-    try {
-        console.log("🌐 جاري تحميل Profile...");
-
-        const metadata = await downloadFile(
-            profileUrl,
-            zipPath
+    const tempRoot =
+        fs.mkdtempSync(
+            path.join(
+                os.tmpdir(),
+                "wolf-profile-"
+            )
         );
 
-        console.log("✅ تم تحميل Profile");
+    const zipPath =
+        path.join(
+            tempRoot,
+            "wolf-profile.zip"
+        );
+
+    const extractPath =
+        path.join(
+            tempRoot,
+            "profile"
+        );
+
+    try {
+        console.log(
+            "🌐 جاري تحميل Profile..."
+        );
+
+        const metadata =
+            await downloadFile(
+                profileUrl,
+                zipPath
+            );
+
+        console.log(
+            "✅ تم تحميل Profile"
+        );
 
         validateZipFile(
             zipPath,
             metadata
         );
 
-        profileDir = await extractProfile(
-            zipPath,
-            extractPath
-        );
+        profileDir =
+            await extractProfile(
+                zipPath,
+                extractPath
+            );
 
-        cleanChromeLocks(profileDir);
+        cleanChromeLocks(
+            profileDir
+        );
 
         console.log(
             `📂 Chrome User Data: ${profileDir}`
@@ -454,33 +745,31 @@ export async function loadSession() {
             "🚀 تشغيل Chromium..."
         );
 
-        context = await chromium.launchPersistentContext(
-            profileDir,
-            {
-                headless: true,
+        context =
+            await chromium.launchPersistentContext(
+                profileDir,
+                {
+                    headless: true,
+                    args: [
+                        "--no-sandbox",
+                        "--disable-setuid-sandbox",
+                        "--disable-dev-shm-usage",
+                        "--disable-gpu",
+                        "--no-first-run",
+                        "--no-default-browser-check"
+                    ]
+                }
+            );
 
-                args: [
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-gpu",
-                    "--no-first-run",
-                    "--no-default-browser-check",
-                    "--disable-background-networking",
-                    "--disable-background-timer-throttling",
-                    "--disable-renderer-backgrounding"
-                ]
-            }
-        );
+        browser =
+            context.browser();
 
-        browser = context.browser();
-
-        let pages = context.pages();
-
-        let page = pages[0];
+        let page =
+            context.pages()[0];
 
         if (!page) {
-            page = await context.newPage();
+            page =
+                await context.newPage();
         }
 
         console.log(
@@ -490,7 +779,8 @@ export async function loadSession() {
         await page.goto(
             "https://app.wolf.live/mna",
             {
-                waitUntil: "domcontentloaded",
+                waitUntil:
+                    "domcontentloaded",
                 timeout: 120000
             }
         );
@@ -500,7 +790,7 @@ export async function loadSession() {
         );
 
         console.log(
-            "⏳ انتظار تحميل جلسة WOLF..."
+            "⏳ انتظار جلسة WOLF..."
         );
 
         let credentials = null;
@@ -512,7 +802,9 @@ export async function loadSession() {
         ) {
             try {
                 credentials =
-                    await readWolfTokens(page);
+                    await readWolfTokens(
+                        page
+                    );
             } catch {}
 
             if (
@@ -522,9 +814,11 @@ export async function loadSession() {
                 break;
             }
 
-            if (attempt % 5 === 0) {
+            if (
+                attempt % 5 === 0
+            ) {
                 console.log(
-                    `⏳ محاولة قراءة WOLF credentials: ${attempt}/60`
+                    `⏳ قراءة credentials: ${attempt}/60`
                 );
             }
 
@@ -533,13 +827,15 @@ export async function loadSession() {
 
         if (!credentials?.token) {
             throw new Error(
-                "❌ لم يتم العثور على v3APIToken داخل Chrome Profile"
+                "❌ لم يتم العثور على v3APIToken"
             );
         }
 
-        if (!credentials?.appCheckToken) {
+        if (
+            !credentials?.appCheckToken
+        ) {
             throw new Error(
-                "❌ لم يتم العثور على appCheckToken داخل Chrome Profile"
+                "❌ لم يتم العثور على appCheckToken"
             );
         }
 
@@ -548,8 +844,10 @@ export async function loadSession() {
         );
 
         return {
-            token: credentials.token,
-            appCheckToken: credentials.appCheckToken,
+            token:
+                credentials.token,
+            appCheckToken:
+                credentials.appCheckToken,
             device: "web",
             isAppCheckEnabled: true,
             page
@@ -560,7 +858,9 @@ export async function loadSession() {
         );
 
         console.error(
-            error?.stack || error?.message || error
+            error?.stack ||
+            error?.message ||
+            error
         );
 
         throw error;
@@ -568,7 +868,7 @@ export async function loadSession() {
 }
 
 // ============================================================
-// Close Browser
+// Close
 // ============================================================
 
 export async function closeSessionBrowser() {
