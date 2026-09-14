@@ -26,50 +26,24 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Install Chromium
-        run: |
-          npx playwright install --with-deps chromium
-
-      - name: Install Xvfb
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb
-
-      - name: Install Google Drive downloader
-        run: |
-          python3 -m pip install --upgrade gdown
-
-      - name: Download WOLF Chrome session
+      - name: Check WOLF Profile Secret
         env:
           WOLF_PROFILE_URL: ${{ secrets.WOLF_PROFILE_URL }}
-
         run: |
-          set -e
-
           echo "========================================"
-          echo "📥 Downloading WOLF Chrome session"
+          echo "🔐 Checking WOLF Profile Secret"
           echo "========================================"
 
           if [ -z "$WOLF_PROFILE_URL" ]; then
-            echo "❌ WOLF_PROFILE_URL secret is missing."
+            echo "❌ WOLF_PROFILE_URL is NOT available"
             exit 1
           fi
 
-          gdown "$WOLF_PROFILE_URL" \
-            -O session.zip
-
-          if [ ! -s session.zip ]; then
-            echo "❌ session.zip is empty."
-            exit 1
-          fi
-
-          echo "✅ WOLF session downloaded."
-
-          ls -lh session.zip
+          echo "✅ WOLF_PROFILE_URL is available"
 
       - name: Start WOLF Bot
         env:
-          WOLF_PROFILE_ZIP: ${{ github.workspace }}/session.zip
+          WOLF_PROFILE_URL: ${{ secrets.WOLF_PROFILE_URL }}
           WOLF_DEVICE: web
           WOLF_IS_APP_CHECK_ENABLED: "true"
 
@@ -78,13 +52,9 @@ jobs:
           echo "🐺 Starting WOLF Bot"
           echo "========================================"
 
-          xvfb-run -a \
-            --server-args="-screen 0 1365x900x24" \
-            npm start
+          npm start
 
       - name: Cleanup
         if: always()
         run: |
-          rm -f session.zip
-          rm -rf "$RUNNER_TEMP/wolf-session-runtime"
-          rm -rf "$RUNNER_TEMP/service-session-runtime"
+          echo "🧹 Cleanup"
