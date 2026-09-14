@@ -9,64 +9,203 @@ let browser = null;
 let context = null;
 let profileDir = null;
 
-
 // ============================================================
-// تحميل الملف من الرابط
+// Helpers
 // ============================================================
 
-function downloadFile(url, outputPath) {
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function downloadFile(url, outputPath, redirectCount = 0) {
     return new Promise((resolve, reject) => {
+        if (redirectCount > 10) {
+            reject(new Error("Too many redirects while downloading profile"));
+            return;
+        }
 
-        const request = https.get(url, response => {
+        console.log(`🌐 تحميل من: ${url}`);
 
-            // Redirect
-            if (
-                response.statusCode >= 300 &&
-                response.statusCode < 400 &&
-                response.headers.location
-            ) {
-                response.destroy();
+        const request = https.get(
+            url,
+            {
+                headers: {
+                    "User-Agent":
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/140 Safari/537.36",
+                    "Accept":
+                        "application/zip,application/octet-stream,*/*"
+                }
+            },
+            response => {
+                const statusCode = response.statusCode || 0;
 
-                return downloadFile(
-                    response.headers.location,
-                    outputPath
-                )
-                    .then(resolve)
-                    .catch(reject);
-            }
+                // Redirect
+                if (
+                    statusCode >= 300 &&
+                    statusCode < 400 &&
+                    response.headers.location
+                ) {
+                    const redirectUrl = new URL(
+                        response.headers.location,
+                        url
+                    ).toString();
 
-            if (response.statusCode !== 200) {
-                reject(
-                    new Error(
-                        `فشل تحميل Profile. HTTP ${response.statusCode}`
+                    response.resume();
+
+                    console.log(`↪️ Redirect -> ${redirectUrl}`);
+
+                    downloadFile(
+                        redirectUrl,
+                        outputPath,
+                        redirectCount + 1
                     )
-                );
-                return;
+                        .then(resolve)
+                        .catch(reject);
+
+                    return;
+                }
+
+                if (statusCode < 200 || statusCode >= 300) {
+                    response.resume();
+
+                    reject(
+                        new Error(
+                            `HTTP ${statusCode} while downloading profile`
+                        )
+                    );
+
+                    return;
+                }
+
+                const file = fs.createWriteStream(outputPath);
+
+                let totalBytes = 0;
+
+                response.on("data", chunk => {
+                    totalBytes += chunk.length;
+                });
+
+                response.pipe(file);
+
+                file.on("finish", () => {
+                    file.close(() => {
+                        console.log(
+                            `📦 تم تنزيل الملف: ${(totalBytes / 1024 / 1024).toFixed(
+                                2
+                            )} MB`
+                        );
+
+                        resolve({
+                            bytes: totalBytes,
+                            contentType:
+                                response.headers["content-type"] || ""
+                        });
+                    });
+                });
+
+                file.on("error", error => {
+                    try {
+                        file.close();
+                    } catch {}
+
+                    reject(error);
+                });
             }
-
-            const file = fs.createWriteStream(outputPath);
-
-            response.pipe(file);
-
-            file.on("finish", () => {
-                file.close();
-                resolve();
-            });
-
-            file.on("error", reject);
-        });
+        );
 
         request.on("error", reject);
+
+        request.setTimeout(120000, () => {
+            request.destroy(
+                new Error("Profile download timeout")
+            );
+        });
     });
 }
 
+// ============================================================
+// ZIP Validation
+// ============================================================
+
+function validateZipFile(zipPath, metadata = {}) {
+    if (!fs.existsSync(zipPath)) {
+        throw new Error("❌ ملف Profile غير موجود بعد التحميل");
+    }
+
+    const stat = fs.statSync(zipPath);
+
+    console.log(
+        `📏 حجم Profile: ${(stat.size / 1024 / 1024).toFixed(2)} MB`
+    );
+
+    console.log(
+        `📄 Content-Type: ${
+            metadata.contentType || "غير معروف"
+        }`
+    );
+
+    if (stat.size === 0) {
+        throw new Error(
+            "❌ Profile ZIP فارغ — WOLF_PROFILE_URL لم يرجع ملفًا"
+        );
+    }
+
+    // ZIP files normally start with PK
+    const fd = fs.openSync(zipPath, "r");
+
+    try {
+        const header = Buffer.alloc(4);
+
+        fs.readSync(fd, header, 0, 4, 0);
+
+        const signature = header.toString("hex");
+
+        console.log(`🔎 ZIP Signature: ${signature}`);
+
+        if (
+            signature !== "504b0304" &&
+            signature !== "504b0506" &&
+            signature !== "504b0708"
+        ) {
+            // Read first bytes for diagnostics
+            const previewBuffer = Buffer.alloc(
+                Math.min(200, stat.size)
+            );
+
+            fs.readSync(
+                fd,
+                previewBuffer,
+                0,
+                previewBuffer.length,
+                0
+            );
+
+            const preview = previewBuffer
+                .toString("utf8")
+                .replace(/\s+/g, " ")
+                .slice(0, 200);
+
+            console.log(
+                `⚠️ بداية الملف ليست ZIP: ${preview}`
+            );
+
+            throw new Error(
+                "❌ WOLF_PROFILE_URL لا يرجع ZIP صالح. " +
+                "غالبًا الرابط يرجع HTML أو صفحة تحميل بدل ملف ZIP."
+            );
+        }
+    } finally {
+        fs.closeSync(fd);
+    }
+
+    console.log("✅ ZIP signature صحيح");
+}
 
 // ============================================================
-// تنظيف ملفات Chrome القديمة
+// Extract Profile
 // ============================================================
 
 function cleanChromeLocks(dir) {
-
     const lockFiles = [
         "SingletonLock",
         "SingletonSocket",
@@ -75,199 +214,176 @@ function cleanChromeLocks(dir) {
     ];
 
     for (const file of lockFiles) {
-
-        const filePath = path.join(dir, file);
+        const fullPath = path.join(dir, file);
 
         try {
-
-            if (fs.existsSync(filePath)) {
-                fs.rmSync(filePath, {
+            if (fs.existsSync(fullPath)) {
+                fs.rmSync(fullPath, {
+                    recursive: true,
                     force: true
                 });
             }
-
-        } catch (err) {
-
-            console.log(
-                `⚠️ تعذر حذف ${file}: ${err.message}`
-            );
-
-        }
+        } catch {}
     }
 }
 
-
-// ============================================================
-// البحث عن مجلد Chrome الحقيقي
-// ============================================================
-
-function findChromeProfile(root) {
-
-    const possible = [
-
-        path.join(root, "Default"),
-
-        path.join(root, "Profile 1"),
-
-        path.join(root, "Profile 2"),
-
-        path.join(root, "User Data", "Default"),
-
-        path.join(root, "User Data", "Profile 1"),
-
-        path.join(root, "Chrome", "User Data", "Default"),
-
-        path.join(root, "Chrome", "User Data", "Profile 1")
-
+function findUserDataDir(rootDir) {
+    const candidates = [
+        rootDir,
+        path.join(rootDir, "User Data"),
+        path.join(rootDir, "Chrome User Data"),
+        path.join(rootDir, "Default")
     ];
 
-    for (const dir of possible) {
-
-        if (fs.existsSync(dir)) {
-            return dir;
-        }
-    }
-
-    return null;
-}
-
-
-// ============================================================
-// البحث عن Local State
-// ============================================================
-
-function findUserDataDir(root) {
-
-    const possible = [
-
-        root,
-
-        path.join(root, "User Data"),
-
-        path.join(root, "Chrome", "User Data")
-
-    ];
-
-    for (const dir of possible) {
+    for (const candidate of candidates) {
+        if (!fs.existsSync(candidate)) continue;
 
         const localState = path.join(
-            dir,
+            candidate,
             "Local State"
         );
 
-        if (fs.existsSync(localState)) {
-            return dir;
+        const defaultDir = path.join(
+            candidate,
+            "Default"
+        );
+
+        if (
+            fs.existsSync(localState) ||
+            fs.existsSync(defaultDir)
+        ) {
+            return candidate;
         }
     }
 
-    return root;
+    return rootDir;
 }
 
-
-// ============================================================
-// استخراج Profile
-// ============================================================
-
-async function extractProfile(zipPath) {
-
-    const extractDir = path.join(
-        os.tmpdir(),
-        `wolf-profile-${Date.now()}`
-    );
-
-    fs.mkdirSync(
-        extractDir,
-        {
-            recursive: true
-        }
-    );
-
+async function extractProfile(zipPath, destination) {
     console.log("📦 جاري فك Chrome Profile...");
 
-    const zip = new AdmZip(zipPath);
+    validateZipFile(zipPath);
 
-    zip.extractAllTo(
-        extractDir,
-        true
+    let zip;
+
+    try {
+        zip = new AdmZip(zipPath);
+    } catch (error) {
+        throw new Error(
+            `❌ تعذر فتح ZIP بعد التحقق منه: ${
+                error?.message || error
+            }`
+        );
+    }
+
+    const entries = zip.getEntries();
+
+    if (!entries.length) {
+        throw new Error(
+            "❌ ZIP لا يحتوي على أي ملفات"
+        );
+    }
+
+    console.log(
+        `📁 عدد ملفات Profile داخل ZIP: ${entries.length}`
     );
+
+    fs.mkdirSync(destination, {
+        recursive: true
+    });
+
+    zip.extractAllTo(destination, true);
 
     console.log("✅ تم فك Chrome Profile");
 
-    return extractDir;
+    return findUserDataDir(destination);
 }
 
-
 // ============================================================
-// قراءة Tokens من localStorage
+// Read WOLF Tokens
 // ============================================================
 
 async function readWolfTokens(page) {
-
     return await page.evaluate(() => {
+        const result = {
+            token: null,
+            appCheckToken: null
+        };
 
-        const result = {};
+        const entries = [];
 
         for (let i = 0; i < localStorage.length; i++) {
-
             const key = localStorage.key(i);
 
             if (!key) continue;
 
-            let value;
+            let value = null;
 
             try {
                 value = localStorage.getItem(key);
-            } catch {
-                continue;
-            }
+            } catch {}
 
-            if (!value) continue;
+            entries.push({
+                key,
+                value
+            });
 
-            const lower = key.toLowerCase();
+            const lowerKey = key.toLowerCase();
 
             if (
-                lower.includes("v3apitoken") ||
-                lower.includes("v3_api_token")
+                !result.token &&
+                (
+                    lowerKey.includes("v3apitoken") ||
+                    lowerKey.includes("v3_api_token")
+                )
             ) {
-                result.v3APIToken = value;
+                result.token = value;
             }
 
             if (
-                lower.includes("appchecktoken") ||
-                lower.includes("app_check_token")
+                !result.appCheckToken &&
+                (
+                    lowerKey.includes("appchecktoken") ||
+                    lowerKey.includes("app_check_token")
+                )
             ) {
                 result.appCheckToken = value;
             }
-
         }
 
-        // فحص إضافي للقيم
-        if (!result.v3APIToken) {
+        // Fallback search
+        if (!result.token) {
+            for (const item of entries) {
+                if (!item.value) continue;
 
-            for (let i = 0; i < localStorage.length; i++) {
-
-                const key = localStorage.key(i);
-
-                const value = localStorage.getItem(key);
+                const value = String(item.value);
 
                 if (
-                    value &&
-                    typeof value === "string" &&
-                    value.length > 30 &&
-                    value.length < 500 &&
-                    value.includes(".")
+                    value.length > 100 &&
+                    (
+                        value.includes("eyJ") ||
+                        value.toLowerCase().includes("apitoken")
+                    )
                 ) {
+                    result.token = value;
+                    break;
+                }
+            }
+        }
 
-                    const lower =
-                        (key || "").toLowerCase();
+        // Fallback AppCheck
+        if (!result.appCheckToken) {
+            for (const item of entries) {
+                if (!item.value) continue;
 
-                    if (
-                        lower.includes("token") &&
-                        !lower.includes("appcheck")
-                    ) {
-                        result.v3APIToken = value;
-                        break;
-                    }
+                const value = String(item.value);
+
+                if (
+                    value.length > 200 &&
+                    value.toLowerCase().includes("appcheck")
+                ) {
+                    result.appCheckToken = value;
+                    break;
                 }
             }
         }
@@ -276,217 +392,206 @@ async function readWolfTokens(page) {
     });
 }
 
-
 // ============================================================
-// تحميل جلسة WOLF
+// Load Session
 // ============================================================
 
 export async function loadSession() {
+    const profileUrl = process.env.WOLF_PROFILE_URL;
 
-    if (!process.env.WOLF_PROFILE_URL) {
+    if (!profileUrl) {
         throw new Error(
-            "WOLF_PROFILE_URL غير موجود"
+            "❌ WOLF_PROFILE_URL غير موجود في GitHub Secrets"
         );
     }
 
     console.log("🐺 بدء تحميل WOLF Profile...");
 
-
-    const workDir = path.join(
-        os.tmpdir(),
-        `wolf-loader-${Date.now()}`
+    const tempRoot = fs.mkdtempSync(
+        path.join(
+            os.tmpdir(),
+            "wolf-profile-"
+        )
     );
-
-    fs.mkdirSync(
-        workDir,
-        {
-            recursive: true
-        }
-    );
-
 
     const zipPath = path.join(
-        workDir,
+        tempRoot,
         "wolf-profile.zip"
     );
 
-
-    console.log("🌐 جاري تحميل Profile...");
-
-    await downloadFile(
-        process.env.WOLF_PROFILE_URL,
-        zipPath
+    const extractPath = path.join(
+        tempRoot,
+        "profile"
     );
 
-    console.log("✅ تم تحميل Profile");
+    try {
+        console.log("🌐 جاري تحميل Profile...");
 
+        const metadata = await downloadFile(
+            profileUrl,
+            zipPath
+        );
 
-    profileDir = await extractProfile(
-        zipPath
-    );
+        console.log("✅ تم تحميل Profile");
 
+        validateZipFile(
+            zipPath,
+            metadata
+        );
 
-    const userDataDir =
-        findUserDataDir(profileDir);
+        profileDir = await extractProfile(
+            zipPath,
+            extractPath
+        );
 
+        cleanChromeLocks(profileDir);
 
-    console.log(
-        `📁 Chrome User Data: ${userDataDir}`
-    );
+        console.log(
+            `📂 Chrome User Data: ${profileDir}`
+        );
 
+        console.log(
+            "🚀 تشغيل Chromium..."
+        );
 
-    cleanChromeLocks(
-        userDataDir
-    );
+        context = await chromium.launchPersistentContext(
+            profileDir,
+            {
+                headless: true,
 
+                args: [
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                    "--disable-background-networking",
+                    "--disable-background-timer-throttling",
+                    "--disable-renderer-backgrounding"
+                ]
+            }
+        );
 
-    // ========================================================
-    // تشغيل Chrome
-    // ========================================================
+        browser = context.browser();
 
-    console.log("🌐 تشغيل Chrome...");
+        let pages = context.pages();
 
-    context = await chromium.launchPersistentContext(
-        userDataDir,
-        {
-            headless: true,
+        let page = pages[0];
 
-            viewport: {
-                width: 1365,
-                height: 900
-            },
-
-            args: [
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--no-first-run",
-                "--no-default-browser-check"
-            ]
+        if (!page) {
+            page = await context.newPage();
         }
-    );
 
+        console.log(
+            "🌐 فتح WOLF..."
+        );
 
-    browser = context.browser();
+        await page.goto(
+            "https://app.wolf.live/mna",
+            {
+                waitUntil: "domcontentloaded",
+                timeout: 120000
+            }
+        );
 
+        console.log(
+            `🌐 WOLF URL: ${page.url()}`
+        );
 
-    const pages = context.pages();
+        console.log(
+            "⏳ انتظار تحميل جلسة WOLF..."
+        );
 
-    let page = pages[0];
+        let credentials = null;
 
-    if (!page) {
-        page = await context.newPage();
-    }
-
-
-    console.log("🌐 فتح WOLF...");
-
-    await page.goto(
-        "https://app.wolf.live/mna",
-        {
-            waitUntil: "domcontentloaded",
-            timeout: 120000
-        }
-    ).catch(() => {});
-
-
-    // ========================================================
-    // انتظار تحميل LocalStorage
-    // ========================================================
-
-    let credentials = null;
-
-    for (let i = 0; i < 30; i++) {
-
-        credentials =
-            await readWolfTokens(page);
-
-        if (
-            credentials?.v3APIToken &&
-            credentials?.appCheckToken
+        for (
+            let attempt = 1;
+            attempt <= 60;
+            attempt++
         ) {
-            break;
+            try {
+                credentials =
+                    await readWolfTokens(page);
+            } catch {}
+
+            if (
+                credentials?.token &&
+                credentials?.appCheckToken
+            ) {
+                break;
+            }
+
+            if (attempt % 5 === 0) {
+                console.log(
+                    `⏳ محاولة قراءة WOLF credentials: ${attempt}/60`
+                );
+            }
+
+            await sleep(1000);
         }
 
-        await new Promise(
-            resolve => setTimeout(resolve, 2000)
-        );
-    }
+        if (!credentials?.token) {
+            throw new Error(
+                "❌ لم يتم العثور على v3APIToken داخل Chrome Profile"
+            );
+        }
 
-
-    if (!credentials?.v3APIToken) {
-
-        throw new Error(
-            "❌ لم يتم العثور على v3APIToken داخل جلسة WOLF"
-        );
-    }
-
-
-    console.log(
-        "🔐 تم العثور على WOLF token"
-    );
-
-
-    if (credentials.appCheckToken) {
+        if (!credentials?.appCheckToken) {
+            throw new Error(
+                "❌ لم يتم العثور على appCheckToken داخل Chrome Profile"
+            );
+        }
 
         console.log(
-            "🛡️ تم العثور على App Check token"
+            "✅ تم العثور على WOLF credentials"
         );
 
-    } else {
-
-        console.log(
-            "⚠️ App Check token غير موجود"
+        return {
+            token: credentials.token,
+            appCheckToken: credentials.appCheckToken,
+            device: "web",
+            isAppCheckEnabled: true,
+            page
+        };
+    } catch (error) {
+        console.error(
+            "❌ فشل تحميل WOLF Profile:"
         );
 
+        console.error(
+            error?.stack || error?.message || error
+        );
+
+        throw error;
     }
-
-
-    return {
-
-        token: credentials.v3APIToken,
-
-        appCheckToken:
-            credentials.appCheckToken || "",
-
-        device: "web",
-
-        isAppCheckEnabled: true,
-
-        page
-    };
 }
 
-
 // ============================================================
-// إغلاق Chrome
+// Close Browser
 // ============================================================
 
 export async function closeSessionBrowser() {
+    console.log(
+        "🧹 إغلاق Chrome Session..."
+    );
 
     try {
-
         if (context) {
-
-            console.log(
-                "🌐 إغلاق Chrome Session..."
-            );
-
             await context.close();
-
         }
-
-    } catch (err) {
-
-        console.log(
-            `⚠️ خطأ أثناء إغلاق Chrome: ${err.message}`
+    } catch (error) {
+        console.error(
+            "⚠️ خطأ أثناء إغلاق Chrome:",
+            error?.message || error
         );
-
-    } finally {
-
-        context = null;
-        browser = null;
-
     }
+
+    browser = null;
+    context = null;
+    profileDir = null;
+
+    console.log(
+        "✅ تم إغلاق Chrome Session"
+    );
 }
