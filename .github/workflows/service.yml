@@ -9,7 +9,7 @@ on:
 
 # ============================================================
 # نسخة واحدة فقط
-# التشغيل الجديد يقتل السابق
+# أي تشغيل جديد يلغي التشغيل السابق مباشرة
 # ============================================================
 
 concurrency:
@@ -23,31 +23,83 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    # ========================================================
+    # أقصى مدة للـ Runner
+    # ========================================================
+
     timeout-minutes: 245
 
     steps:
 
+      # ========================================================
+      # Checkout
+      # ========================================================
+
       - name: Checkout repository
         uses: actions/checkout@v6
+
+
+      # ========================================================
+      # Node.js
+      # ========================================================
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
           node-version: "20"
 
+
+      # ========================================================
+      # Install dependencies
+      # ========================================================
+
       - name: Install dependencies
-        run: npm install
+        run: |
+
+          echo "========================================"
+          echo "📦 Installing dependencies"
+          echo "========================================"
+
+          npm install
+
+
+      # ========================================================
+      # Start WOLF
+      # ========================================================
 
       - name: Start WOLF Bot
         env:
+
           WOLF_PROFILE_URL: ${{ secrets.WOLF_PROFILE_URL }}
 
         run: |
 
+          echo ""
+          echo "========================================"
+          echo "🐺 WOLF BOT STARTING"
+          echo "========================================"
+
+          echo "🕐 Start time: $(date)"
+          echo "⏱️ Maximum runtime: 4 hours"
+          echo "🔄 New run will cancel previous run"
+          echo "========================================"
+
+
+          # ====================================================
+          # مدة تشغيل WOLF
+          # 4 ساعات
+          # ====================================================
+
           RUN_SECONDS=14400
 
           START_TIME=$(date +%s)
+
           END_TIME=$((START_TIME + RUN_SECONDS))
+
+
+          # ====================================================
+          # Cleanup
+          # ====================================================
 
           cleanup() {
 
@@ -56,19 +108,36 @@ jobs:
             echo "🧹 WOLF CLEANUP"
             echo "========================================"
 
+            echo "🛑 Stopping current WOLF..."
+
+
+            # --------------------------------------------------
+            # إذا كان PID موجود
+            # --------------------------------------------------
+
             if [ -n "$BOT_PID" ]; then
 
               if kill -0 "$BOT_PID" 2>/dev/null; then
 
-                echo "🛑 Stopping WOLF PID: $BOT_PID"
+                echo "🐺 WOLF PID: $BOT_PID"
 
+                echo "📡 Sending SIGTERM..."
+
+                # قتل Process Group بالكامل
                 kill -TERM -- "-$BOT_PID" 2>/dev/null || true
 
                 sleep 5
 
+
+                # ------------------------------------------------
+                # إذا بقيت العملية
+                # ------------------------------------------------
+
                 if kill -0 "$BOT_PID" 2>/dev/null; then
 
-                  echo "💀 Force killing WOLF"
+                  echo "⚠️ WOLF still running"
+
+                  echo "💀 Sending SIGKILL..."
 
                   kill -KILL -- "-$BOT_PID" 2>/dev/null || true
 
@@ -78,17 +147,28 @@ jobs:
 
             fi
 
+
             echo "✅ WOLF cleanup completed"
+
           }
 
+
+          # ====================================================
+          # Signals
+          # ====================================================
 
           trap cleanup EXIT
           trap cleanup INT
           trap cleanup TERM
 
 
+          # ====================================================
+          # Start WOLF
+          # ====================================================
+
+          echo ""
           echo "========================================"
-          echo "🐺 STARTING WOLF"
+          echo "🚀 Starting WOLF"
           echo "========================================"
 
           setsid npm start &
@@ -97,37 +177,89 @@ jobs:
 
           echo "🐺 WOLF PID: $BOT_PID"
 
+          echo "🕐 Started: $(date)"
+
+
+          # ====================================================
+          # Monitor
+          # ====================================================
 
           while true; do
 
             NOW=$(date +%s)
 
+
+            # --------------------------------------------------
+            # انتهت مدة الأربع ساعات
+            # --------------------------------------------------
+
             if [ "$NOW" -ge "$END_TIME" ]; then
 
-              echo "⏰ 4 hours completed"
+              echo ""
+              echo "========================================"
+              echo "⏰ 4 HOURS COMPLETED"
+              echo "========================================"
+
+              echo "🕐 Current time: $(date)"
+
+              echo "🛑 Stopping WOLF..."
 
               exit 0
 
             fi
 
 
+            # --------------------------------------------------
+            # WOLF توقف بشكل غير متوقع
+            # --------------------------------------------------
+
             if ! kill -0 "$BOT_PID" 2>/dev/null; then
 
-              echo "❌ WOLF stopped unexpectedly"
+              echo ""
+              echo "========================================"
+              echo "⚠️ WOLF STOPPED UNEXPECTEDLY"
+              echo "========================================"
 
               wait "$BOT_PID" 2>/dev/null || true
+
+              echo "❌ WOLF process is no longer running"
 
               exit 1
 
             fi
 
 
+            # --------------------------------------------------
+            # حساب مدة التشغيل
+            # --------------------------------------------------
+
             ELAPSED=$((NOW - START_TIME))
 
             HOURS=$((ELAPSED / 3600))
+
             MINUTES=$(((ELAPSED % 3600) / 60))
 
-            echo "🐺 WOLF running: ${HOURS}h ${MINUTES}m"
+            SECONDS=$((ELAPSED % 60))
+
+
+            # --------------------------------------------------
+            # Status
+            # --------------------------------------------------
+
+            echo ""
+            echo "🐺 WOLF is running"
+
+            echo "⏱️ Runtime: ${HOURS}h ${MINUTES}m ${SECONDS}s"
+
+            echo "🕐 $(date)"
+
+            echo "========================================"
+
+
+            # --------------------------------------------------
+            # فحص كل 30 ثانية
+            # --------------------------------------------------
 
             sleep 30
-          fi
+
+          done
