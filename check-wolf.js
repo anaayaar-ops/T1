@@ -27,7 +27,7 @@ const TOTAL_EVENTS = 32;
 const EVENT_DURATION_MINUTES = 45;
 
 const FIRST_EVENT_TIME = new Date(
-    2026, 8, 14, 21, 0,0 );
+    2026, 8, 15, 21, 0,0 );
 
 // ============================================================
 // صورة الفعاليات
