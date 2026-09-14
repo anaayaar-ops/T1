@@ -2,6 +2,7 @@ import fs from 'fs';
 import sharp from 'sharp';
 import wolfjs from 'wolf.js';
 import { io } from 'socket.io-client';
+import { chromium } from 'playwright';
 
 import {
     loadSession,
@@ -14,455 +15,421 @@ import {
 
 const { WOLF, OnlineState } = wolfjs;
 
-const GROUP_ID = 18432094;
-
-const EVENT_NAME = " ᷂فعاليآت ᷂خليجنا،ذوق.";
-
-const TOTAL_EVENTS = 32;
-
-const EVENT_DURATION_MIN = 45;
-
-const IMAGE_PATH = './178332617173751.jpeg';
-
 // ============================================================
-// بداية الجدول
-// 16 سبتمبر 2026 - الساعة 12:00 صباحًا بتوقيت السعودية
+// ⚙️ إعدادات WOLF
 // ============================================================
 
-const START_TIME =
-    new Date('2026-09-17T00:00:00+03:00');
+const TARGET_GROUP = 18432094;
+
+// التاريخ المطلوب
+const TARGET_DATE = '2026-09-14';
+
+// العضوية التي رفعت الفعاليات
+const TARGET_MEMBER_ID = 80055399;
+
+// رقم العضوية الأساسي في النموذج
+const MEMBERSHIP_NUMBER = '224';
+
+// رابط Typeform
+const FORM_URL = 'https://survey-poll.typeform.com/to/JTsKMIEB';
+
+// سرعة الكتابة
+const TYPE_DELAY = 40;
 
 // ============================================================
-// متغيرات الاتصال
+// 🐺 إنشاء خدمة WOLF
 // ============================================================
 
-let service = null;
+const service = new WOLF();
+
 let socket = null;
-let browserClosed = false;
 
 // ============================================================
-// أدوات مساعدة
+// 🛠️ أدوات عامة
 // ============================================================
 
 const sleep = ms =>
     new Promise(resolve => setTimeout(resolve, ms));
 
-function formatAMPM(date) {
 
-    let hours = date.getHours();
+// ============================================================
+// 🕐 تحويل الوقت إلى توقيت السعودية
+// ============================================================
 
-    const minutes =
-        String(date.getMinutes())
-            .padStart(2, '0');
+function getRiyadhParts(date) {
 
-    const ampm =
-        hours >= 12
-            ? 'pm'
-            : 'am';
+    const formatter = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Asia/Riyadh',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+    });
 
-    hours =
-        hours % 12 || 12;
+    const parts = formatter.formatToParts(date);
 
-    return `${hours}:${minutes}${ampm}`;
+    const get = type =>
+        parts.find(p => p.type === type)?.value;
+
+    return {
+        year: Number(get('year')),
+        month: Number(get('month')),
+        day: Number(get('day')),
+        hour: Number(get('hour')),
+        minute: Number(get('minute'))
+    };
 }
 
-function formatDate(date) {
 
-    return date.toLocaleString(
-        'ar-SA',
+// ============================================================
+// 🕐 عرض الوقت
+// ============================================================
+
+function formatTime(date) {
+
+    const p = getRiyadhParts(date);
+
+    let hour = p.hour;
+
+    const ampm = hour >= 12
+        ? 'PM'
+        : 'AM';
+
+    hour = hour % 12 || 12;
+
+    return `${hour}:${String(p.minute).padStart(2, '0')} ${ampm}`;
+}
+
+
+// ============================================================
+// 📅 استخراج تاريخ السعودية
+// ============================================================
+
+function formatSaudiDate(date) {
+
+    const p = getRiyadhParts(date);
+
+    return `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}`;
+}
+
+
+// ============================================================
+// ⌨️ كتابة مثل الإنسان
+// ============================================================
+
+async function typeReal(page, value, {
+    pressEnterAfter = false
+} = {}) {
+
+    await page.keyboard.type(
+        String(value),
         {
-            timeZone: 'Asia/Riyadh',
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit',
-            hour: '2-digit',
-            minute: '2-digit',
-            hour12: true
+            delay: TYPE_DELAY
         }
     );
+
+    if (pressEnterAfter) {
+
+        await page.waitForTimeout(200);
+
+        await page.keyboard.press('Enter');
+    }
 }
 
+
 // ============================================================
-// إغلاق آمن
+// ⌨️ تعبئة السؤال النشط
 // ============================================================
 
-async function shutdown(code = 0) {
-
-    console.log('');
-    console.log('========================================');
-    console.log('🛑 جاري إنهاء التشغيل...');
-    console.log('========================================');
-
-    try {
-
-        if (socket) {
-            socket.disconnect();
-        }
-
-    } catch {}
+async function fillActiveQuestion(
+    page,
+    value,
+    {
+        pressEnterAfter = true,
+        waitAfter = 500
+    } = {}
+) {
 
     try {
 
-        if (service?.websocket?.socket) {
-            service.websocket.socket.disconnect();
-        }
+        await page.waitForFunction(() => {
 
-    } catch {}
+            const el = document.activeElement;
 
-    try {
+            return (
+                el &&
+                (
+                    el.tagName === 'INPUT' ||
+                    el.tagName === 'TEXTAREA'
+                )
+            );
 
-        if (!browserClosed) {
+        }, {
+            timeout: 5000
+        });
 
-            browserClosed = true;
+        const active =
+            page.locator(
+                'input:focus, textarea:focus'
+            ).first();
 
-            await closeSessionBrowser();
-        }
+        await active.waitFor({
+            state: 'visible',
+            timeout: 5000
+        });
 
-    } catch (err) {
+    } catch {
 
         console.log(
-            '⚠️ تعذر إغلاق جلسة Chrome:',
-            err?.message || err
+            '⚠️ لم يتم رصد الحقل النشط، أحاول استخدام آخر حقل ظاهر...'
         );
 
+        const fallback =
+            page
+                .locator(
+                    'input:visible, textarea:visible'
+                )
+                .last();
+
+        await fallback.click({
+            timeout: 5000
+        });
     }
 
-    console.log(
-        `🏁 انتهى البرنامج — Code ${code}`
+    await typeReal(
+        page,
+        value
     );
 
-    process.exit(code);
-}
+    if (pressEnterAfter) {
 
-// ============================================================
-// تجهيز الصورة
-// ============================================================
+        await page.waitForTimeout(200);
 
-async function prepareThumbnail() {
-
-    if (!fs.existsSync(IMAGE_PATH)) {
-
-        throw new Error(
-            `الصورة غير موجودة: ${IMAGE_PATH}`
-        );
+        await page.keyboard.press('Enter');
     }
 
-    console.log('');
-    console.log(
-        `🖼️ تجهيز الصورة: ${IMAGE_PATH}`
-    );
-
-    const buffer =
-        await sharp(IMAGE_PATH)
-            .jpeg({
-                quality: 90
-            })
-            .toBuffer();
-
-    console.log(
-        `✅ تم تجهيز الصورة (${buffer.length} bytes)`
-    );
-
-    return buffer;
+    await page.waitForTimeout(waitAfter);
 }
 
+
 // ============================================================
-// انتظار Authorization
+// 🔘 زر OK
 // ============================================================
 
-async function waitForSubscriber(
-    timeoutMs = 60000
-) {
+async function clickOkButton(page) {
 
-    const started =
-        Date.now();
+    try {
 
-    console.log(
-        '⏳ انتظار Authorization...'
-    );
+        const okButton =
+            page
+                .getByRole(
+                    'button',
+                    {
+                        name: /^OK$/i
+                    }
+                )
+                .first();
 
-    while (
-        Date.now() - started <
-        timeoutMs
-    ) {
+        await okButton.click({
+            timeout: 3000
+        });
 
-        if (
-            service?.currentSubscriber?.id
-        ) {
+        return true;
 
-            console.log('');
-            console.log('========================================');
-            console.log('✅ Authorization complete');
-            console.log('========================================');
+    } catch {
 
-            console.log(
-                `👤 الحساب: ${
-                    service.currentSubscriber.username ||
-                    service.currentSubscriber.nickname ||
-                    'غير معروف'
-                }`
-            );
-
-            console.log(
-                `🆔 ID: ${
-                    service.currentSubscriber.id
-                }`
-            );
-
-            return true;
-        }
-
-        await sleep(500);
+        return false;
     }
-
-    return false;
 }
 
-// ============================================================
-// تهيئة WOLF Handlers
-// ============================================================
-
-async function initializeHandlers() {
-
-    console.log(
-        '⚙️ تهيئة WOLF handlers...'
-    );
-
-    await service.websocket.init();
-
-    const count =
-        Object.keys(
-            service.websocket.handlers || {}
-        ).length;
-
-    console.log(
-        `⚙️ تم تحميل ${count} handlers`
-    );
-}
 
 // ============================================================
-// الاتصال باستخدام Google Chrome Profile
+// 🔐 الاتصال بـ WOLF عن طريق Chrome Profile
 // ============================================================
 
-async function connectUsingChromeProfile(
-    credentials
-) {
-
-    const token =
-        credentials?.token;
-
-    const appCheckToken =
-        credentials?.appCheckToken || '';
-
-    const device =
-        credentials?.device || 'web';
-
-    const isAppCheckEnabled =
-        Boolean(
-            credentials?.isAppCheckEnabled ??
-            appCheckToken
-        );
-
-    if (!token) {
-
-        throw new Error(
-            'لم يتم العثور على v3APIToken في Google Chrome Profile.'
-        );
-    }
+async function connectToWolf() {
 
     console.log('');
     console.log('========================================');
-    console.log('🔐 بيانات جلسة Chrome');
+    console.log('🐺 WOLF Chrome Profile Connection');
     console.log('========================================');
 
+    // --------------------------------------------------------
+    // تحميل جلسة Chrome
+    // --------------------------------------------------------
+
+    console.log('🌐 جاري تحميل جلسة Chrome Profile...');
+
+    const session =
+        await loadSession();
+
+    if (!session) {
+
+        throw new Error(
+            'لم يتم تحميل جلسة Chrome.'
+        );
+    }
+
+    /*
+     * بعض نسخ session-loader ترجع credentials مباشرة،
+     * وبعضها ترجع object يحتوي credentials.
+     *
+     * لذلك ندعم الحالتين.
+     */
+
+    const credentials =
+        session.credentials || session;
+
+    if (!credentials.v3APIToken) {
+
+        throw new Error(
+            'لم يتم العثور على v3APIToken داخل جلسة Chrome.'
+        );
+    }
+
     console.log(
-        `🔐 WOLF Token length: ${token.length}`
+        `🔐 v3APIToken: موجود (${credentials.v3APIToken.length})`
     );
 
     console.log(
-        appCheckToken
-            ? `🛡️ AppCheck length: ${appCheckToken.length}`
-            : '⚠️ AppCheck Token غير موجود'
-    );
-
-    console.log(
-        `📱 Device: ${device}`
-    );
-
-    console.log(
-        `🛡️ App Check: ${
-            isAppCheckEnabled
-                ? 'enabled'
-                : 'disabled'
+        `🛡️ appCheckToken: ${
+            credentials.appCheckToken
+                ? `موجود (${credentials.appCheckToken.length})`
+                : 'غير موجود'
         }`
     );
 
-    console.log('========================================');
+    console.log(
+        `📱 Device: ${credentials.device || 'web'}`
+    );
 
-    // ========================================================
-    // إنشاء WOLF
-    // ========================================================
-
-    service = new WOLF();
+    // --------------------------------------------------------
+    // إعداد WOLF
+    // --------------------------------------------------------
 
     service.config.framework.login.token =
-        token;
+        credentials.v3APIToken;
 
     service.config.framework.login.onlineState =
         OnlineState.INVISIBLE;
 
-    if (appCheckToken) {
+    if (credentials.appCheckToken) {
 
         service.config.framework.login.appCheckToken =
-            appCheckToken;
+            credentials.appCheckToken;
     }
 
-    // ========================================================
-    // تهيئة Handlers
-    // ========================================================
+    // --------------------------------------------------------
+    // تهيئة WebSocket handlers
+    // --------------------------------------------------------
 
-    await initializeHandlers();
+    console.log(
+        '⚙️ تهيئة WOLF WebSocket handlers...'
+    );
 
-    // ========================================================
-    // إعداد الاتصال
-    // ========================================================
+    await service.websocket.init();
+
+    console.log(
+        `✅ WOLF handlers: ${
+            Object.keys(
+                service.websocket.handlers || {}
+            ).length
+        }`
+    );
+
+    // --------------------------------------------------------
+    // قراءة إعداد الاتصال
+    // --------------------------------------------------------
 
     const connection =
-        service._frameworkConfig?.get?.(
-            'connection'
-        );
+        service
+            ._frameworkConfig
+            ?.get?.('connection');
 
     const host =
         connection?.host ||
         'https://v3-rc.palringo.com';
 
     const port =
-        connection?.port ?? 443;
+        connection?.port ||
+        443;
 
-    const connectionDevice =
-        connection?.query?.device ||
-        device ||
-        'web';
+    const query =
+        connection?.query || {};
 
     console.log('');
-    console.log('========================================');
-    console.log('🔌 بدء اتصال WOLF');
-    console.log('========================================');
+    console.log('📡 إعداد الاتصال:');
+    console.log(`   Host: ${host}`);
+    console.log(`   Port: ${port}`);
+
+    // --------------------------------------------------------
+    // Socket.IO Query
+    // --------------------------------------------------------
+
+    const socketQuery = {
+
+        token:
+            credentials.v3APIToken,
+
+        device:
+            query.device ||
+            credentials.device ||
+            'web',
+
+        state:
+            query.state ??
+            1,
+
+        version:
+            query.version ||
+            '2.7.10',
+
+        isAppCheckEnabled:
+            query.isAppCheckEnabled ??
+            credentials.isAppCheckEnabled ??
+            true,
+
+        appCheckToken:
+            credentials.appCheckToken ||
+            query.appCheckToken ||
+            ''
+    };
 
     console.log(
-        `🌐 Host: ${host}`
+        `   Device: ${socketQuery.device}`
     );
 
-    console.log(
-        `🔌 Port: ${port}`
-    );
-
-    console.log(
-        `📱 Device: ${connectionDevice}`
-    );
-
-    // ========================================================
-    // Socket.IO
-    // ========================================================
+    // --------------------------------------------------------
+    // إنشاء Socket.IO
+    // --------------------------------------------------------
 
     socket =
         io(
-            `${host}:${port}`,
+            host,
             {
+                path: '/socket.io',
+
                 transports: [
                     'websocket'
                 ],
 
-                reconnection: true,
+                query: socketQuery,
 
                 autoConnect: false,
 
-                query: {
+                reconnection: true,
 
-                    token,
+                reconnectionAttempts: 5,
 
-                    device:
-                        connectionDevice,
-
-                    state:
-                        service.config.framework
-                            .login.onlineState,
-
-                    version:
-                        connection?.version ||
-                        undefined,
-
-                    isAppCheckEnabled:
-                        isAppCheckEnabled
-                            ? 'true'
-                            : 'false',
-
-                    appCheckToken:
-                        isAppCheckEnabled
-                            ? appCheckToken
-                            : undefined
-                }
+                timeout: 20000
             }
         );
 
-    service.websocket.socket =
-        socket;
-
-    // ========================================================
-    // Connected
-    // ========================================================
-
-    socket.on(
-        'connect',
-        () => {
-
-            console.log('');
-            console.log('========================================');
-            console.log(
-                '🔗 تم الاتصال بـ WOLF Socket.IO'
-            );
-            console.log(
-                `🔗 Connection ID: ${socket.id}`
-            );
-            console.log('========================================');
-
-        }
-    );
-
-    // ========================================================
-    // Connection error
-    // ========================================================
-
-    socket.on(
-        'connect_error',
-        error => {
-
-            console.error(
-                '❌ Connection error:',
-                error?.message || error
-            );
-
-        }
-    );
-
-    // ========================================================
-    // Disconnect
-    // ========================================================
-
-    socket.on(
-        'disconnect',
-        reason => {
-
-            console.log(
-                `🔌 Connection closed: ${reason}`
-            );
-
-        }
-    );
-
-    // ========================================================
-    // تمرير أحداث WOLF إلى Handlers
-    // ========================================================
+    // --------------------------------------------------------
+    // تمرير أحداث Socket.IO إلى wolf.js
+    // --------------------------------------------------------
 
     socket.onAny(
         async (
@@ -470,86 +437,183 @@ async function connectUsingChromeProfile(
             data
         ) => {
 
-            try {
+            /*
+             * هذا الحدث يسبب أحيانًا ضوضاء كبيرة،
+             * ولا نحتاج معالجته هنا.
+             */
 
-                if (
-                    eventName ===
-                    'group event update'
-                ) {
-
-                    return;
-                }
-
-                const handler =
-                    service.websocket
-                        .handlers?.[eventName];
-
-                if (!handler) {
-                    return;
-                }
-
-                await handler.process(
-                    data?.body ?? data
-                );
-
-            } catch (error) {
-
-                console.error(
-                    `❌ Handler error [${eventName}]:`,
-                    error?.message || error
-                );
-
+            if (
+                eventName ===
+                'group event update'
+            ) {
+                return;
             }
 
+            const handler =
+                service
+                    .websocket
+                    .handlers?.[eventName];
+
+            if (!handler) {
+                return;
+            }
+
+            try {
+
+                await handler.process(
+                    data?.body ??
+                    data
+                );
+
+            } catch (err) {
+
+                console.error(
+                    `❌ خطأ في Handler: ${eventName}`,
+                    err?.message || err
+                );
+            }
         }
     );
 
-    // ========================================================
-    // الاتصال
-    // ========================================================
+    // --------------------------------------------------------
+    // أحداث Socket
+    // --------------------------------------------------------
 
+    socket.on(
+        'connect',
+        () => {
+
+            console.log(
+                '🔌 Socket.IO connected'
+            );
+        }
+    );
+
+    socket.on(
+        'disconnect',
+        reason => {
+
+            console.log(
+                `🔌 Socket.IO disconnected: ${reason}`
+            );
+        }
+    );
+
+    socket.on(
+        'connect_error',
+        err => {
+
+            console.error(
+                '❌ Socket.IO connection error:',
+                err?.message || err
+            );
+        }
+    );
+
+    // --------------------------------------------------------
+    // ربط Socket مع wolf.js
+    // --------------------------------------------------------
+
+    service.websocket.socket =
+        socket;
+
+    // --------------------------------------------------------
+    // الاتصال
+    // --------------------------------------------------------
+
+    console.log('');
     console.log(
-        '🔌 Connecting...'
+        '🚀 جاري الاتصال بـ WOLF...'
     );
 
     socket.connect();
 
-    // ========================================================
+    // --------------------------------------------------------
     // انتظار Authorization
-    // ========================================================
+    // --------------------------------------------------------
 
-    const ready =
-        await waitForSubscriber(
-            60000
-        );
+    const authorizationTimeout =
+        30000;
 
-    if (!ready) {
+    const started =
+        Date.now();
 
-        throw new Error(
-            'WOLF اتصل لكن Authorization لم يكتمل.'
-        );
+    while (
+        !service.currentSubscriber?.id
+    ) {
+
+        if (
+            Date.now() -
+            started >
+            authorizationTimeout
+        ) {
+
+            throw new Error(
+                'انتهت مهلة Authorization في WOLF.'
+            );
+        }
+
+        await sleep(500);
     }
+
+    // --------------------------------------------------------
+    // نجاح
+    // --------------------------------------------------------
 
     console.log('');
     console.log(
-        '🟢 WOLF جاهز للفعاليات.'
+        '========================================'
     );
+
+    console.log(
+        '✅ WOLF Authorization complete'
+    );
+
+    console.log(
+        `👤 Nickname: ${
+            service.currentSubscriber.nickname
+        }`
+    );
+
+    console.log(
+        `🆔 ID: ${
+            service.currentSubscriber.id
+        }`
+    );
+
+    console.log(
+        '👻 Online State: Invisible'
+    );
+
+    console.log(
+        '========================================'
+    );
+
+    return true;
 }
 
+
 // ============================================================
-// جلب الفعاليات الموجودة
-// بدون استخدام event.group.getList()
+// 📋 جلب فعاليات الروم
 // ============================================================
 
-async function getExistingEvents() {
+async function getGroupEvents() {
 
     console.log('');
+    console.log(
+        '========================================'
+    );
+
     console.log(
         '🔍 جاري جلب فعاليات الروم...'
     );
 
     console.log(
-        `🏠 GROUP_ID: ${GROUP_ID}`
+        `🏠 GROUP_ID: ${TARGET_GROUP}`
+    );
+
+    console.log(
+        '========================================'
     );
 
     try {
@@ -559,31 +623,40 @@ async function getExistingEvents() {
         );
 
         const timeoutPromise =
-            new Promise((_, reject) => {
+            new Promise(
+                (_, reject) => {
 
-                setTimeout(() => {
+                    setTimeout(
+                        () => {
 
-                    reject(
-                        new Error(
-                            'انتهت مهلة جلب قائمة الفعاليات بعد 30 ثانية.'
-                        )
+                            reject(
+                                new Error(
+                                    'انتهت مهلة جلب قائمة الفعاليات بعد 30 ثانية.'
+                                )
+                            );
+
+                        },
+                        30000
                     );
-
-                }, 30000);
-
-            });
+                }
+            );
 
         const requestPromise =
             service.websocket.emit(
                 Command.GROUP_EVENT_LIST,
                 {
-                    id: Number(GROUP_ID),
+                    id: Number(TARGET_GROUP),
+
                     subscribe: true,
+
                     offset: 0,
+
                     limit:
-                        service._frameworkConfig
+                        service
+                            ._frameworkConfig
                             ?.batching
-                            ?.length || 100
+                            ?.length ||
+                        100
                 }
             );
 
@@ -593,28 +666,21 @@ async function getExistingEvents() {
                 timeoutPromise
             ]);
 
-        console.log(
-            '📦 تم استلام رد GROUP_EVENT_LIST'
-        );
-
         if (!response) {
 
-            console.log(
-                '⚠️ لم يتم استلام Response.'
+            throw new Error(
+                'لم يتم استلام Response من WOLF.'
             );
-
-            return false;
         }
 
         console.log(
-            '📦 Success:',
-            response.success
+            `📦 Success: ${response.success}`
         );
 
         if (!response.success) {
 
             console.log(
-                '⚠️ فشل طلب قائمة الفعاليات.'
+                '❌ فشل جلب قائمة الفعاليات.'
             );
 
             console.log(
@@ -625,7 +691,7 @@ async function getExistingEvents() {
                 )
             );
 
-            return false;
+            return [];
         }
 
         const body =
@@ -633,71 +699,11 @@ async function getExistingEvents() {
                 ? response.body
                 : [];
 
-        // ====================================================
-        // لا توجد فعاليات
-        // ====================================================
-
-        if (body.length === 0) {
-
-            console.log('');
-            console.log(
-                'ℹ️ لا توجد فعاليات في الروم.'
-            );
-
-            console.log(
-                '↩️ سيتم إرجاع false.'
-            );
-
-            return false;
-        }
-
         console.log(
-            `📋 تم العثور على ${body.length} فعالية.`
+            `📋 تم العثور على ${body.length} فعالية في الروم.`
         );
 
-        // ====================================================
-        // جلب IDs
-        // ====================================================
-
-        const ids =
-            body
-                .map(event => event?.id)
-                .filter(Boolean);
-
-        if (!ids.length) {
-
-            console.log(
-                '⚠️ لم يتم العثور على Event IDs.'
-            );
-
-            return false;
-        }
-
-        console.log(
-            `🔎 جاري جلب تفاصيل ${ids.length} فعالية...`
-        );
-
-        // ====================================================
-        // جلب تفاصيل الفعاليات
-        // ====================================================
-
-        const details =
-            await service.event.getByIds(ids);
-
-        if (!Array.isArray(details)) {
-
-            console.log(
-                '⚠️ تفاصيل الفعاليات ليست Array.'
-            );
-
-            return false;
-        }
-
-        console.log(
-            `✅ تم جلب ${details.length} فعالية موجودة.`
-        );
-
-        return details;
+        return body;
 
     } catch (err) {
 
@@ -712,650 +718,901 @@ async function getExistingEvents() {
             err
         );
 
-        return false;
+        return [];
     }
 }
 
-// ============================================================
-// أوقات الفعاليات
-// ============================================================
-
-function getEventStart(event) {
-
-    if (!event) {
-        return NaN;
-    }
-
-    if (
-        event.startsAt instanceof Date
-    ) {
-
-        return event.startsAt.getTime();
-    }
-
-    return new Date(
-        event.startsAt
-    ).getTime();
-}
-
-function getEventEnd(event) {
-
-    if (!event) {
-        return NaN;
-    }
-
-    if (
-        event.endsAt instanceof Date
-    ) {
-
-        return event.endsAt.getTime();
-    }
-
-    return new Date(
-        event.endsAt
-    ).getTime();
-}
 
 // ============================================================
-// فحص التعارض
+// 🔎 البحث عن فعاليات التاريخ والعضوية
 // ============================================================
 
-function findConflict(
-    existingEvents,
-    startTime,
-    endTime
-) {
+async function findTargetEvents() {
 
-    return existingEvents.find(
-        event => {
+    const list =
+        await getGroupEvents();
 
-            const eStart =
-                getEventStart(event);
+    if (!list.length) {
 
-            const eEnd =
-                getEventEnd(event);
-
-            if (
-                !Number.isFinite(eStart) ||
-                !Number.isFinite(eEnd)
-            ) {
-
-                return false;
-            }
-
-            return (
-                startTime.getTime() < eEnd &&
-                endTime.getTime() > eStart
-            );
-        }
-    );
-}
-
-// ============================================================
-// إنشاء الفعاليات
-// ============================================================
-
-async function createEvents(
-    existingEvents
-) {
-
-    const createdEventIds = [];
-
-    let startTime =
-        new Date(START_TIME);
-
-    // ========================================================
-    // نستخدم فقط الفعاليات التي تنتهي بعد بداية الجدول
-    // ========================================================
-
-    const relevantEvents =
-        existingEvents.filter(
-            event => {
-
-                const end =
-                    getEventEnd(event);
-
-                return (
-                    Number.isFinite(end) &&
-                    end > START_TIME.getTime()
-                );
-            }
+        console.log(
+            '⚠️ لا توجد فعاليات في الروم.'
         );
 
+        return [];
+    }
+
+    // --------------------------------------------------------
+    // تحديد فعاليات التاريخ المطلوب
+    // --------------------------------------------------------
+
+    const dayEventIds = [];
+
+    for (
+        const ev of list
+    ) {
+
+        const info =
+            ev.additionalInfo || {};
+
+        const startTimeStr =
+            info.startsAt ||
+            ev.startsAt;
+
+        if (!startTimeStr) {
+            continue;
+        }
+
+        const startTime =
+            new Date(startTimeStr);
+
+        if (
+            Number.isNaN(
+                startTime.getTime()
+            )
+        ) {
+            continue;
+        }
+
+        const dateStr =
+            formatSaudiDate(
+                startTime
+            );
+
+        if (
+            dateStr !==
+            TARGET_DATE
+        ) {
+            continue;
+        }
+
+        dayEventIds.push({
+            id: ev.id,
+
+            dateStr,
+
+            start: startTime
+        });
+    }
+
     console.log('');
-    console.log('========================================');
-    console.log('🚀 بدء إنشاء الفعاليات');
-    console.log('========================================');
-
     console.log(
-        `📅 البداية: ${formatDate(startTime)}`
+        `📅 فعاليات التاريخ ${TARGET_DATE}: ${dayEventIds.length}`
     );
 
-    console.log(
-        `⏱️ مدة كل فعالية: ${EVENT_DURATION_MIN} دقيقة`
-    );
+    if (!dayEventIds.length) {
+
+        return [];
+    }
+
+    // --------------------------------------------------------
+    // جلب التفاصيل الكاملة
+    // --------------------------------------------------------
 
     console.log(
-        `🔢 العدد المطلوب: ${TOTAL_EVENTS}`
+        `🔎 جاري جلب تفاصيل ${dayEventIds.length} فعالية...`
     );
 
+    const ids =
+        dayEventIds
+            .map(
+                e => e.id
+            )
+            .filter(Boolean);
+
+    const fullEvents =
+        await service.event.getByIds(
+            ids
+        );
+
+    if (
+        !Array.isArray(fullEvents)
+    ) {
+
+        console.log(
+            '⚠️ لم يتم استلام تفاصيل الفعاليات.'
+        );
+
+        return [];
+    }
+
     console.log(
-        `🔍 فعاليات مؤثرة على الجدول: ${
-            relevantEvents.length
-        }`
+        `✅ تم جلب تفاصيل ${fullEvents.length} فعالية.`
+    );
+
+    // --------------------------------------------------------
+    // فلترة createdBy
+    // --------------------------------------------------------
+
+    const foundEvents = [];
+
+    for (
+        const fullEv of fullEvents
+    ) {
+
+        const meta =
+            dayEventIds.find(
+                e =>
+                    Number(e.id) ===
+                    Number(fullEv.id)
+            );
+
+        if (!meta) {
+            continue;
+        }
+
+        const createdBy =
+            fullEv.createdBy;
+
+        if (
+            createdBy !== null &&
+            createdBy !== undefined &&
+            parseInt(createdBy, 10) ===
+            TARGET_MEMBER_ID
+        ) {
+
+            foundEvents.push({
+
+                id:
+                    fullEv.id,
+
+                dateStr:
+                    meta.dateStr,
+
+                timeStr:
+                    formatTime(
+                        meta.start
+                    ),
+
+                start:
+                    meta.start
+            });
+        }
+    }
+
+    // --------------------------------------------------------
+    // ترتيب حسب الوقت
+    // --------------------------------------------------------
+
+    foundEvents.sort(
+        (a, b) =>
+            a.start -
+            b.start
     );
 
     console.log('');
+    console.log(
+        '========================================'
+    );
+
+    console.log(
+        `📋 تم العثور على ${foundEvents.length} فعالية مطابقة.`
+    );
+
+    console.log(
+        '========================================'
+    );
 
     for (
         let i = 0;
-        i < TOTAL_EVENTS;
+        i < foundEvents.length;
         i++
     ) {
 
-        const endTime =
-            new Date(
-                startTime.getTime() +
-                EVENT_DURATION_MIN *
-                60 *
-                1000
-            );
-
-        const number =
-            i + 1;
+        const event =
+            foundEvents[i];
 
         console.log(
-            `\n[${number}/${TOTAL_EVENTS}] ` +
-            `${formatDate(startTime)} → ` +
-            `${formatDate(endTime)}`
+            `${i + 1}. ID: ${event.id} | ${event.dateStr} | ${event.timeStr}`
         );
-
-        const conflict =
-            findConflict(
-                relevantEvents,
-                startTime,
-                endTime
-            );
-
-        if (conflict) {
-
-            console.log(
-                '⚠️ يوجد تعارض — تم تجاوز الفترة.'
-            );
-
-            if (conflict.id) {
-
-                console.log(
-                    `   ↳ Event ID: ${conflict.id}`
-                );
-            }
-
-            if (
-                conflict.startsAt &&
-                conflict.endsAt
-            ) {
-
-                console.log(
-                    `   ↳ ${formatDate(
-                        new Date(
-                            conflict.startsAt
-                        )
-                    )}` +
-                    ` → ${formatDate(
-                        new Date(
-                            conflict.endsAt
-                        )
-                    )}`
-                );
-            }
-
-        } else {
-
-            try {
-
-                const response =
-                    await service.event.group.create(
-                        GROUP_ID,
-                        {
-                            title:
-                                EVENT_NAME,
-
-                            startsAt:
-                                startTime,
-
-                            endsAt:
-                                endTime
-                        }
-                    );
-
-                if (response?.success) {
-
-                    const eventId =
-                        response.body?.id;
-
-                    if (eventId) {
-
-                        const numericEventId =
-                            parseInt(
-                                eventId,
-                                10
-                            );
-
-                        createdEventIds.push(
-                            numericEventId
-                        );
-
-                        console.log(
-                            `✅ تم إنشاء الفعالية` +
-                            ` | ID: ${eventId}` +
-                            ` | الوقت: ${formatAMPM(
-                                startTime
-                            )}`
-                        );
-
-                        // منع التعارض مع الفعاليات
-                        // التي أنشأناها أثناء نفس التشغيل
-
-                        relevantEvents.push({
-
-                            id:
-                                numericEventId,
-
-                            startsAt:
-                                new Date(
-                                    startTime
-                                ),
-
-                            endsAt:
-                                new Date(
-                                    endTime
-                                ),
-
-                            title:
-                                EVENT_NAME
-
-                        });
-
-                    } else {
-
-                        console.log(
-                            '⚠️ تم الإنشاء لكن لم يتم العثور على Event ID.'
-                        );
-
-                        console.log(
-                            JSON.stringify(
-                                response,
-                                null,
-                                2
-                            )
-                        );
-                    }
-
-                } else {
-
-                    console.log(
-                        '❌ فشل إنشاء الفعالية.'
-                    );
-
-                    console.log(
-                        JSON.stringify(
-                            response,
-                            null,
-                            2
-                        )
-                    );
-                }
-
-            } catch (err) {
-
-                console.error(
-                    `❌ خطأ في إنشاء الفعالية رقم ${number}:`,
-                    err?.message || err
-                );
-            }
-        }
-
-        startTime =
-            new Date(
-                endTime.getTime()
-            );
-
-        await sleep(700);
     }
 
-    console.log('');
-    console.log('========================================');
-
-    console.log(
-        `📊 تم إنشاء ${createdEventIds.length} من ${TOTAL_EVENTS}`
-    );
-
-    console.log('========================================');
-
-    return createdEventIds;
+    return foundEvents;
 }
 
+
 // ============================================================
-// رفع الصور
+// 📝 رفع الفعاليات إلى Typeform
 // ============================================================
 
-async function uploadThumbnails(
-    eventIds,
-    thumbnailBuffer
+async function submitEventsToForm(
+    events
 ) {
 
-    if (!eventIds.length) {
+    if (
+        events.length === 0
+    ) {
 
         console.log('');
         console.log(
-            'ℹ️ لا توجد فعاليات جديدة لرفع الصور لها.'
+            '⚠️ لا توجد فعاليات مطابقة في هذا التاريخ لرفعها.'
         );
 
         return;
     }
 
     console.log('');
-    console.log('========================================');
-    console.log('🖼️ رفع صور الفعاليات');
-    console.log('========================================');
+    console.log(
+        `🚀 بدء رفع ${events.length} فعالية إلى Typeform...`
+    );
 
-    let successCount = 0;
-    let failedCount = 0;
+    // --------------------------------------------------------
+    // تشغيل Playwright
+    // --------------------------------------------------------
 
-    for (
-        let i = 0;
-        i < eventIds.length;
-        i++
-    ) {
+    const browser =
+        await chromium.launch({
+            headless: true,
 
-        const eventId =
-            eventIds[i];
+            args: [
+                '--no-sandbox',
+                '--disable-dev-shm-usage'
+            ]
+        });
 
-        console.log('');
+    const context =
+        await browser.newContext();
 
-        console.log(
-            `🖼️ [${i + 1}/${eventIds.length}] ` +
-            `رفع صورة ID ${eventId}...`
-        );
+    const topicLetters = [
+        'A',
+        'B',
+        'C'
+    ];
 
-        try {
+    try {
 
-            if (
-                !Number.isFinite(
-                    Number(eventId)
-                ) ||
-                Number(eventId) <= 0
-            ) {
+        for (
+            let i = 0;
+            i < events.length;
+            i++
+        ) {
 
-                throw new Error(
-                    `Event ID غير صالح: ${eventId}`
-                );
-            }
+            const event =
+                events[i];
 
-            if (
-                !Buffer.isBuffer(
-                    thumbnailBuffer
-                )
-            ) {
+            const currentLetter =
+                topicLetters[
+                    i %
+                    topicLetters.length
+                ];
 
-                throw new Error(
-                    'الصورة ليست Buffer صالح.'
-                );
-            }
+            const [
+                year,
+                month,
+                day
+            ] =
+                event.dateStr.split('-');
 
-            const numericEventId =
-                parseInt(
-                    eventId,
-                    10
-                );
+            const page =
+                await context.newPage();
 
-            const response =
-                await service.event.group.updateThumbnail(
-                    numericEventId,
-                    thumbnailBuffer
-                );
+            console.log('');
+            console.log(
+                '----------------------------------------'
+            );
 
-            if (
-                response?.success === true
-            ) {
+            console.log(
+                `[رفع الفعالية ${i + 1} من ${events.length}]`
+            );
 
-                successCount++;
+            console.log(
+                `🆔 ID: ${event.id}`
+            );
+
+            console.log(
+                `📅 التاريخ: ${event.dateStr}`
+            );
+
+            console.log(
+                `⏰ الوقت: ${event.timeStr}`
+            );
+
+            console.log(
+                `🔤 الموضوع: ${currentLetter}`
+            );
+
+            try {
+
+                // ------------------------------------------------
+                // الخطوة 0
+                // ------------------------------------------------
 
                 console.log(
-                    `✅ تم رفع الصورة بنجاح للفعالية ${numericEventId}`
+                    '  ↳ [الخطوة 0] فتح صفحة النموذج...'
                 );
 
-            } else if (
-                response &&
-                response.success !== false
-            ) {
+                await page.goto(
+                    FORM_URL,
+                    {
+                        waitUntil:
+                            'domcontentloaded',
+                        timeout:
+                            30000
+                    }
+                );
 
-                successCount++;
+                await page.waitForTimeout(
+                    600
+                );
+
+                // ------------------------------------------------
+                // زر بداية النموذج
+                // ------------------------------------------------
+
+                try {
+
+                    const startButton =
+                        page.getByText(
+                            'سجل برنامجك الآن',
+                            {
+                                exact: false
+                            }
+                        );
+
+                    await startButton.waitFor({
+                        timeout: 3000
+                    });
+
+                    await startButton.click();
+
+                    await page.waitForTimeout(
+                        400
+                    );
+
+                } catch {
+                    // لا مشكلة إذا لم يظهر الزر
+                }
+
+                // ------------------------------------------------
+                // الخطوة 1
+                // ------------------------------------------------
 
                 console.log(
-                    `✅ اكتمل طلب رفع الصورة للفعالية ${numericEventId}`
+                    '  ↳ [الخطوة 1] رقم العضوية...'
                 );
 
-                if (response) {
+                await fillActiveQuestion(
+                    page,
+                    MEMBERSHIP_NUMBER
+                );
 
-                    console.log(
-                        '📦 Response:',
-                        JSON.stringify(
-                            response,
-                            null,
-                            2
-                        )
+                // ------------------------------------------------
+                // الخطوة 2
+                // ------------------------------------------------
+
+                console.log(
+                    '  ↳ [الخطوة 2] رقم عضوية القناة...'
+                );
+
+                await fillActiveQuestion(
+                    page,
+                    String(TARGET_GROUP)
+                );
+
+                // ------------------------------------------------
+                // الخطوة 3
+                // ------------------------------------------------
+
+                console.log(
+                    '  ↳ [الخطوة 3] الثيم الأسبوعي (نعم)...'
+                );
+
+                try {
+
+                    const option =
+                        page
+                            .getByText(
+                                'نعم',
+                                {
+                                    exact: false
+                                }
+                            )
+                            .first();
+
+                    await option.click();
+
+                } catch {
+
+                    await page.keyboard.press(
+                        'a'
                     );
                 }
 
-            } else {
-
-                failedCount++;
-
-                console.log(
-                    `❌ فشل رفع صورة الفعالية ${numericEventId}`
+                await page.waitForTimeout(
+                    400
                 );
 
+                // ------------------------------------------------
+                // الخطوة 4
+                // ------------------------------------------------
+
                 console.log(
-                    JSON.stringify(
-                        response,
-                        null,
-                        2
-                    )
+                    `  ↳ [الخطوة 4] اختيار المواضيع (${currentLetter})...`
                 );
+
+                try {
+
+                    const badge =
+                        page
+                            .getByText(
+                                currentLetter.toUpperCase(),
+                                {
+                                    exact: true
+                                }
+                            )
+                            .first();
+
+                    await badge.click({
+                        timeout: 3000
+                    });
+
+                } catch {
+
+                    await page.keyboard.press(
+                        currentLetter.toLowerCase()
+                    );
+                }
+
+                await page.waitForTimeout(
+                    300
+                );
+
+                await page.keyboard.press(
+                    'Enter'
+                );
+
+                await page.waitForTimeout(
+                    400
+                );
+
+                // ------------------------------------------------
+                // الخطوة 5 - التاريخ
+                // ------------------------------------------------
+
+                console.log(
+                    '  ↳ [الخطوة 5] تاريخ الفعالية...'
+                );
+
+                const clickAndType =
+                    async (
+                        placeholder,
+                        value
+                    ) => {
+
+                        try {
+
+                            const input =
+                                page
+                                    .getByPlaceholder(
+                                        placeholder
+                                    )
+                                    .first();
+
+                            await input.click({
+                                timeout: 3000
+                            });
+
+                            await page.keyboard.press(
+                                'Control+A'
+                            );
+
+                            await page.keyboard.press(
+                                'Backspace'
+                            );
+
+                            await typeReal(
+                                page,
+                                value
+                            );
+
+                            await page.waitForTimeout(
+                                200
+                            );
+
+                            const actual =
+                                await input
+                                    .inputValue()
+                                    .catch(
+                                        () => null
+                                    );
+
+                            if (
+                                !actual ||
+                                !actual.includes(
+                                    String(
+                                        parseInt(
+                                            value,
+                                            10
+                                        )
+                                    )
+                                )
+                            ) {
+
+                                console.log(
+                                    `⚠️ حقل "${placeholder}" لم يُعبأ بشكل صحيح، أعيد المحاولة...`
+                                );
+
+                                await input.click({
+                                    timeout: 3000
+                                });
+
+                                await page.keyboard.press(
+                                    'Control+A'
+                                );
+
+                                await page.keyboard.press(
+                                    'Backspace'
+                                );
+
+                                await typeReal(
+                                    page,
+                                    value
+                                );
+
+                                await page.waitForTimeout(
+                                    200
+                                );
+                            }
+
+                            return true;
+
+                        } catch {
+
+                            console.log(
+                                `⚠️ لم يتم إيجاد حقل placeholder="${placeholder}"`
+                            );
+
+                            return false;
+                        }
+                    };
+
+                await clickAndType(
+                    'MM',
+                    month
+                );
+
+                await page.waitForTimeout(
+                    250
+                );
+
+                await clickAndType(
+                    'DD',
+                    day
+                );
+
+                await page.waitForTimeout(
+                    250
+                );
+
+                await clickAndType(
+                    'YYYY',
+                    year
+                );
+
+                await page.waitForTimeout(
+                    250
+                );
+
+                const okClicked =
+                    await clickOkButton(
+                        page
+                    );
+
+                if (!okClicked) {
+
+                    console.log(
+                        '⚠️ لم أجد زر OK، أضغط Enter...'
+                    );
+
+                    await page.keyboard.press(
+                        'Enter'
+                    );
+                }
+
+                await page.waitForTimeout(
+                    500
+                );
+
+                // ------------------------------------------------
+                // الخطوة 6 - الوقت
+                // ------------------------------------------------
+
+                console.log(
+                    '  ↳ [الخطوة 6] وقت الفعالية...'
+                );
+
+                await fillActiveQuestion(
+                    page,
+                    event.timeStr
+                );
+
+                // ------------------------------------------------
+                // الخطوة 7 - ID
+                // ------------------------------------------------
+
+                console.log(
+                    '  ↳ [الخطوة 7] معرف الفعالية...'
+                );
+
+                await fillActiveQuestion(
+                    page,
+                    String(event.id),
+                    {
+                        pressEnterAfter: false,
+                        waitAfter: 300
+                    }
+                );
+
+                // ------------------------------------------------
+                // الإرسال
+                // ------------------------------------------------
+
+                console.log(
+                    '  ↳ [الإرسال النهائي] Ctrl+Enter...'
+                );
+
+                await page.keyboard.press(
+                    'Control+Enter'
+                );
+
+                await page.waitForTimeout(
+                    800
+                );
+
+                // ------------------------------------------------
+                // محاولة الضغط على Submit
+                // ------------------------------------------------
+
+                try {
+
+                    const submitEl =
+                        page
+                            .getByText(
+                                'Submit',
+                                {
+                                    exact: true
+                                }
+                            )
+                            .first();
+
+                    await submitEl.click({
+                        force: true
+                    });
+
+                    await page.waitForTimeout(
+                        500
+                    );
+
+                } catch {
+                    // قد يكون Ctrl+Enter أرسل النموذج بالفعل
+                }
+
+                // ------------------------------------------------
+                // التحقق من النجاح
+                // ------------------------------------------------
+
+                let confirmed = false;
+
+                try {
+
+                    await page
+                        .getByText(
+                            /شكرا|تم استلام|Thank you/i
+                        )
+                        .first()
+                        .waitFor({
+                            timeout: 3500
+                        });
+
+                    confirmed = true;
+
+                } catch {
+                    confirmed = false;
+                }
+
+                if (confirmed) {
+
+                    console.log(
+                        `✅ تم إرسال الفعالية ID ${event.id} بنجاح.`
+                    );
+
+                } else {
+
+                    console.log(
+                        `⚠️ لم تظهر صفحة الشكر للفعالية ID ${event.id}.`
+                    );
+                }
+
+            } catch (err) {
+
+                console.error(
+                    `❌ خطأ أثناء رفع الفعالية ID ${event.id}:`,
+                    err?.message || err
+                );
+
+            } finally {
+
+                await page.close();
+
+                await sleep(500);
             }
-
-        } catch (err) {
-
-            failedCount++;
-
-            console.error(
-                `❌ خطأ برفع صورة ID ${eventId}:`,
-                err?.message || err
-            );
-
         }
 
-        await sleep(800);
+    } finally {
+
+        await browser.close();
     }
 
     console.log('');
-    console.log('========================================');
-    console.log('🖼️ نتيجة رفع الصور');
-    console.log(`✅ ناجح: ${successCount}`);
-    console.log(`❌ فاشل: ${failedCount}`);
-    console.log('========================================');
+    console.log(
+        '========================================'
+    );
+
+    console.log(
+        '🏁 تم الانتهاء من رفع جميع الفعاليات.'
+    );
+
+    console.log(
+        '========================================'
+    );
 }
 
+
 // ============================================================
-// البرنامج الرئيسي
+// 🧹 إغلاق البرنامج
+// ============================================================
+
+async function shutdown(
+    code = 0
+) {
+
+    console.log('');
+    console.log(
+        '🧹 جاري إغلاق الاتصالات...'
+    );
+
+    try {
+
+        if (socket) {
+
+            try {
+                socket.disconnect();
+            } catch {}
+        }
+
+        try {
+
+            service.websocket.socket =
+                null;
+
+        } catch {}
+
+        try {
+
+            await closeSessionBrowser();
+
+        } catch {}
+
+    } catch (err) {
+
+        console.error(
+            '⚠️ خطأ أثناء الإغلاق:',
+            err?.message || err
+        );
+    }
+
+    process.exit(
+        code
+    );
+}
+
+
+// ============================================================
+// 🚀 MAIN
 // ============================================================
 
 async function main() {
 
     console.log('');
-    console.log('========================================');
-    console.log('🐺 WOLF Event Creator');
-    console.log('🐺 wolf.js 2.7.10');
-    console.log('========================================');
-    console.log('');
+    console.log(
+        '========================================'
+    );
+
+    console.log(
+        '🐺 WOLF Event → Typeform Bot'
+    );
+
+    console.log(
+        '========================================'
+    );
+
+    console.log(
+        `🏠 GROUP: ${TARGET_GROUP}`
+    );
+
+    console.log(
+        `📅 TARGET DATE: ${TARGET_DATE}`
+    );
+
+    console.log(
+        `👤 TARGET MEMBER: ${TARGET_MEMBER_ID}`
+    );
+
+    console.log(
+        `🔢 MEMBERSHIP: ${MEMBERSHIP_NUMBER}`
+    );
+
+    console.log(
+        '========================================'
+    );
 
     try {
 
-        // ====================================================
-        // 1. قراءة Google Chrome Profile
-        // ====================================================
+        // --------------------------------------------------------
+        // 1. اتصال WOLF
+        // --------------------------------------------------------
 
-        console.log(
-            '🌐 قراءة جلسة WOLF من Chrome Profile...'
+        await connectToWolf();
+
+        // --------------------------------------------------------
+        // 2. البحث عن الفعاليات
+        // --------------------------------------------------------
+
+        const events =
+            await findTargetEvents();
+
+        // --------------------------------------------------------
+        // 3. إرسال Typeform
+        // --------------------------------------------------------
+
+        await submitEventsToForm(
+            events
         );
 
-        const credentials =
-            await loadSession();
-
-        if (!credentials?.token) {
-
-            throw new Error(
-                'لم يتم العثور على v3APIToken في جلسة Chrome.'
-            );
-        }
-
-        console.log(
-            '✅ تم العثور على توكن WOLF'
-        );
-
-        if (
-            credentials.appCheckToken
-        ) {
-
-            console.log(
-                `🛡️ AppCheck length: ${
-                    credentials.appCheckToken.length
-                }`
-            );
-
-            console.log(
-                '✅ تم العثور على App Check Token'
-            );
-
-        } else {
-
-            console.log(
-                '⚠️ لا يوجد App Check Token'
-            );
-        }
-
-        console.log(
-            `📱 Device: ${
-                credentials.device ||
-                'web'
-            }`
-        );
-
-        // ====================================================
-        // 2. الاتصال باستخدام Chrome Profile
-        // ====================================================
-
-        await connectUsingChromeProfile(
-            credentials
-        );
-
-        // ====================================================
-        // 3. تجهيز الصورة
-        // ====================================================
-
-        const thumbnailBuffer =
-            await prepareThumbnail();
-
-        // ====================================================
-        // 4. جلب الفعاليات الحالية
-        // ====================================================
-
-        const existingEvents =
-            await getExistingEvents();
-
-        // ====================================================
-        // إذا لم توجد فعاليات
-        // ====================================================
-
-        if (existingEvents === false) {
-
-            console.log('');
-            console.log('========================================');
-            console.log('ℹ️ لا توجد فعاليات.');
-            console.log('↩️ سيتم إرجاع false وإيقاف البرنامج.');
-            console.log('========================================');
-
-            await sleep(1000);
-
-            await shutdown(0);
-
-            return false;
-        }
-
-        // ====================================================
-        // 5. إنشاء الفعاليات
-        // ====================================================
-
-        const createdEventIds =
-            await createEvents(
-                existingEvents
-            );
-
-        // ====================================================
-        // 6. رفع الصور
-        // ====================================================
-
-        await uploadThumbnails(
-            createdEventIds,
-            thumbnailBuffer
-        );
-
-        // ====================================================
-        // 7. النهاية
-        // ====================================================
+        // --------------------------------------------------------
+        // 4. نجاح
+        // --------------------------------------------------------
 
         console.log('');
-        console.log('========================================');
-        console.log('🎉 اكتملت العملية');
-        console.log('========================================');
-
         console.log(
-            `📅 البداية: ${formatDate(
-                START_TIME
-            )}`
+            '✅ اكتملت جميع المهام بنجاح.'
         );
 
-        console.log(
-            `⏱️ مدة الفعالية: ${
-                EVENT_DURATION_MIN
-            } دقيقة`
+        await sleep(1000);
+
+        await shutdown(
+            0
         );
-
-        console.log(
-            `🔢 المطلوب: ${
-                TOTAL_EVENTS
-            }`
-        );
-
-        console.log(
-            `✅ تم إنشاء: ${
-                createdEventIds.length
-            }`
-        );
-
-        console.log('========================================');
-
-        await sleep(1500);
-
-        await shutdown(0);
 
     } catch (err) {
 
         console.error('');
-        console.error('========================================');
-        console.error('❌ حصل خطأ');
-        console.error('========================================');
+        console.error(
+            '========================================'
+        );
+
+        console.error(
+            '❌ حدث خطأ رئيسي:'
+        );
 
         console.error(
             err?.stack ||
@@ -1363,34 +1620,19 @@ async function main() {
             err
         );
 
-        await shutdown(1);
+        console.error(
+            '========================================'
+        );
+
+        await shutdown(
+            1
+        );
     }
 }
 
-// ============================================================
-// إيقاف
-// ============================================================
-
-process.on(
-    'SIGINT',
-    async () => {
-
-        await shutdown(0);
-
-    }
-);
-
-process.on(
-    'SIGTERM',
-    async () => {
-
-        await shutdown(0);
-
-    }
-);
 
 // ============================================================
-// START
+// ▶️ تشغيل
 // ============================================================
 
 main();
