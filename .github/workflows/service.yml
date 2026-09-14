@@ -1,25 +1,23 @@
-name: WOLF Bot
+name: WOLF Event Bot
 
 # ============================================================
-# تشغيل يدوي + تشغيل تلقائي كل 4 ساعات
+# تشغيل يدوي فقط
+# لا يوجد تشغيل تلقائي
 # ============================================================
 
 on:
   workflow_dispatch:
 
-  schedule:
-    - cron: "0 */4 * * *"
-
 
 # ============================================================
-# نسخة WOLF واحدة فقط
+# نسخة واحدة فقط
 #
 # إذا بدأ تشغيل جديد:
 # يتم إلغاء التشغيل السابق مباشرة
 # ============================================================
 
 concurrency:
-  group: wolf-bot
+  group: wolf-event-bot
   cancel-in-progress: true
 
 
@@ -33,11 +31,9 @@ jobs:
 
     runs-on: ubuntu-latest
 
-    # ========================================================
-    # أقصى مدة للـ Runner
-    # ========================================================
-
-    timeout-minutes: 245
+    # حماية من تعليق البوت لفترة طويلة
+    # المهمة الطبيعية يفترض أن تنتهي خلال دقائق
+    timeout-minutes: 30
 
 
     steps:
@@ -47,6 +43,7 @@ jobs:
       # ======================================================
 
       - name: Checkout repository
+
         uses: actions/checkout@v6
 
 
@@ -55,16 +52,19 @@ jobs:
       # ======================================================
 
       - name: Setup Node.js
+
         uses: actions/setup-node@v7
+
         with:
           node-version: "20"
 
 
       # ======================================================
-      # Dependencies
+      # Install Dependencies
       # ======================================================
 
       - name: Install dependencies
+
         run: |
 
           echo ""
@@ -85,6 +85,7 @@ jobs:
       # ======================================================
 
       - name: Check WOLF Profile Secret
+
         env:
           WOLF_PROFILE_URL: ${{ secrets.WOLF_PROFILE_URL }}
 
@@ -96,19 +97,24 @@ jobs:
           echo "========================================"
 
           if [ -z "$WOLF_PROFILE_URL" ]; then
+
             echo "❌ WOLF_PROFILE_URL is NOT available"
+
             exit 1
+
           fi
 
           echo "✅ WOLF_PROFILE_URL is available"
+
           echo "========================================"
 
 
       # ======================================================
-      # Start WOLF
+      # Run WOLF Event Task
       # ======================================================
 
-      - name: Start WOLF Bot
+      - name: Run WOLF Event Task
+
         env:
           WOLF_PROFILE_URL: ${{ secrets.WOLF_PROFILE_URL }}
 
@@ -116,205 +122,63 @@ jobs:
 
           echo ""
           echo "========================================"
-          echo "🐺 WOLF BOT STARTING"
+          echo "🐺 WOLF EVENT BOT"
           echo "========================================"
 
-          echo "🕐 Start time: $(date)"
-          echo "⏱️ Maximum runtime: 4 hours"
-          echo "🔄 New workflow cancels previous workflow"
+          echo "🕐 Start: $(date)"
+
+          echo "🎯 المهمة: إنشاء الفعاليات + رفع الصور"
+
           echo "📱 DEVICE: web"
+
           echo "🛡️ APP CHECK: true"
 
           echo "========================================"
 
 
-          # ====================================================
-          # مدة تشغيل WOLF
-          # 4 ساعات
-          # ====================================================
+          # ==================================================
+          # تشغيل البوت بشكل مباشر
+          #
+          # لا يوجد:
+          # - تشغيل 4 ساعات
+          # - تشغيل 5 ساعات
+          # - while loop
+          # - sleep
+          # - مراقبة مستمرة
+          #
+          # npm start ينفذ المهمة ثم check-wolf.js
+          # يغلق نفسه بعد انتهاء المهمة.
+          # ==================================================
 
-          RUN_SECONDS=14400
-
-
-          # ====================================================
-          # Start time
-          # ====================================================
-
-          START_TIME=$(date +%s)
-          END_TIME=$((START_TIME + RUN_SECONDS))
-
-
-          # ====================================================
-          # Cleanup
-          # ====================================================
-
-          cleanup() {
-
-            echo ""
-            echo "========================================"
-            echo "🧹 WOLF CLEANUP"
-            echo "========================================"
-
-            echo "🛑 Stopping WOLF..."
+          npm start
 
 
-            if [ -n "$BOT_PID" ]; then
-
-              if kill -0 "$BOT_PID" 2>/dev/null; then
-
-                echo ""
-                echo "🐺 WOLF PID: $BOT_PID"
-                echo "📡 Sending SIGTERM..."
-
-                # قتل Process Group بالكامل
-                kill -TERM -- "-$BOT_PID" 2>/dev/null || true
-
-                sleep 5
-
-                if kill -0 "$BOT_PID" 2>/dev/null; then
-
-                  echo "⚠️ WOLF is still running"
-                  echo "💀 Sending SIGKILL..."
-
-                  kill -KILL -- "-$BOT_PID" 2>/dev/null || true
-
-                fi
-
-              else
-
-                echo "ℹ️ WOLF process already stopped"
-
-              fi
-
-            else
-
-              echo "ℹ️ WOLF PID is not available"
-
-            fi
-
-
-            echo ""
-            echo "✅ WOLF cleanup completed"
-            echo "========================================"
-          }
-
-
-          # ====================================================
-          # Signals
-          # ====================================================
-
-          trap cleanup EXIT
-          trap cleanup INT
-          trap cleanup TERM
-
-
-          # ====================================================
-          # Start WOLF
-          # ====================================================
-
-          echo ""
-          echo "========================================"
-          echo "🚀 STARTING WOLF"
-          echo "========================================"
-
-          echo "🕐 $(date)"
-          echo "========================================"
-
-
-          # تشغيل WOLF داخل Process Group منفصلة
-
-          setsid npm start &
-
-          BOT_PID=$!
+          EXIT_CODE=$?
 
 
           echo ""
-          echo "🐺 WOLF PID: $BOT_PID"
-          echo "🕐 Started: $(date)"
+          echo "========================================"
+
+          if [ "$EXIT_CODE" -eq 0 ]; then
+
+            echo "✅ WOLF EVENT TASK COMPLETED"
+
+            echo "🎯 تم تنفيذ المهمة بنجاح"
+
+          else
+
+            echo "❌ WOLF EVENT TASK FAILED"
+
+            echo "Exit code: $EXIT_CODE"
+
+          fi
+
+          echo "🕐 End: $(date)"
+
           echo "========================================"
 
 
-          # ====================================================
-          # Monitor WOLF
-          # ====================================================
-
-          while true; do
-
-            NOW=$(date +%s)
-
-
-            # ==================================================
-            # انتهاء الأربع ساعات
-            # ==================================================
-
-            if [ "$NOW" -ge "$END_TIME" ]; then
-
-              echo ""
-              echo "========================================"
-              echo "⏰ 4 HOURS COMPLETED"
-              echo "========================================"
-
-              echo "🕐 Current time: $(date)"
-              echo "🛑 Stopping WOLF..."
-              echo "========================================"
-
-              exit 0
-
-            fi
-
-
-            # ==================================================
-            # Check WOLF process
-            # ==================================================
-
-            if ! kill -0 "$BOT_PID" 2>/dev/null; then
-
-              echo ""
-              echo "========================================"
-              echo "⚠️ WOLF STOPPED UNEXPECTEDLY"
-              echo "========================================"
-
-              wait "$BOT_PID" 2>/dev/null || true
-
-              echo "❌ WOLF process is no longer running"
-              echo "========================================"
-
-              exit 1
-
-            fi
-
-
-            # ==================================================
-            # Runtime
-            # ==================================================
-
-            ELAPSED=$((NOW - START_TIME))
-
-            HOURS=$((ELAPSED / 3600))
-            MINUTES=$(((ELAPSED % 3600) / 60))
-            SECONDS=$((ELAPSED % 60))
-
-
-            # ==================================================
-            # Status
-            # ==================================================
-
-            echo ""
-            echo "🐺 WOLF is running"
-            echo "⏱️ Runtime: ${HOURS}h ${MINUTES}m ${SECONDS}s"
-            echo "🕐 $(date)"
-            echo "📱 DEVICE: web"
-            echo "🛡️ APP CHECK: true"
-            echo "========================================"
-
-
-            # ==================================================
-            # فحص كل 30 ثانية
-            # ==================================================
-
-            sleep 30
-
-          done
+          exit "$EXIT_CODE"
 
 
       # ======================================================
@@ -322,6 +186,7 @@ jobs:
       # ======================================================
 
       - name: Final Cleanup
+
         if: always()
 
         run: |
@@ -331,8 +196,7 @@ jobs:
           echo "🧹 FINAL CLEANUP"
           echo "========================================"
 
-          echo "🛑 Cleaning current WOLF process..."
-
+          echo "🛑 التأكد من عدم وجود WOLF process..."
 
           pkill -TERM -f "node check-wolf.js" 2>/dev/null || true
 
@@ -340,7 +204,7 @@ jobs:
 
           pkill -KILL -f "node check-wolf.js" 2>/dev/null || true
 
-
           echo ""
           echo "✅ Final cleanup completed"
+
           echo "========================================"
