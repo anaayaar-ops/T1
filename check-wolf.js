@@ -1,6 +1,7 @@
 import fs from 'fs';
 import sharp from 'sharp';
 import wolfjs from 'wolf.js';
+import { io } from 'socket.io-client';
 
 import {
     loadSession,
@@ -27,10 +28,18 @@ const IMAGE_PATH = './178332617173751.jpeg';
 const START_TIME = new Date('2026-09-16T21:00:00+03:00');
 
 // ============================================================
+// متغيرات الاتصال
+// ============================================================
+
+let service = null;
+let socket = null;
+let browserClosed = false;
+
+// ============================================================
 // أدوات مساعدة
 // ============================================================
 
-const sleep = (ms) =>
+const sleep = ms =>
     new Promise(resolve => setTimeout(resolve, ms));
 
 function formatAMPM(date) {
@@ -57,21 +66,23 @@ function formatDate(date) {
 }
 
 // ============================================================
-// تنظيف وإغلاق آمن
+// إغلاق آمن
 // ============================================================
 
-let service = null;
-let browserClosed = false;
-
 async function shutdown(code = 0) {
+
     console.log('');
     console.log('🛑 جاري إنهاء التشغيل...');
 
     try {
+        if (socket) {
+            socket.disconnect();
+        }
+    } catch {}
+
+    try {
         if (service?.websocket?.socket) {
-            try {
-                service.websocket.socket.disconnect();
-            } catch {}
+            service.websocket.socket.disconnect();
         }
     } catch {}
 
@@ -81,43 +92,84 @@ async function shutdown(code = 0) {
             await closeSessionBrowser();
         }
     } catch (err) {
-        console.log('⚠️ تعذر إغلاق جلسة Chrome:', err.message);
+        console.log(
+            '⚠️ تعذر إغلاق جلسة Chrome:',
+            err?.message || err
+        );
     }
 
-    console.log(`🏁 انتهى البرنامج — Code ${code}`);
+    console.log(
+        `🏁 انتهى البرنامج — Code ${code}`
+    );
 
     process.exit(code);
 }
 
 // ============================================================
-// تحميل الصورة
+// تجهيز الصورة
 // ============================================================
 
 async function prepareThumbnail() {
+
     if (!fs.existsSync(IMAGE_PATH)) {
-        throw new Error(`الصورة غير موجودة: ${IMAGE_PATH}`);
+        throw new Error(
+            `الصورة غير موجودة: ${IMAGE_PATH}`
+        );
     }
 
-    console.log(`🖼️ تجهيز الصورة: ${IMAGE_PATH}`);
+    console.log(
+        `🖼️ تجهيز الصورة: ${IMAGE_PATH}`
+    );
 
-    const buffer = await sharp(IMAGE_PATH)
-        .jpeg({ quality: 90 })
-        .toBuffer();
+    const buffer =
+        await sharp(IMAGE_PATH)
+            .jpeg({ quality: 90 })
+            .toBuffer();
 
-    console.log(`✅ تم تجهيز الصورة (${buffer.length} bytes)`);
+    console.log(
+        `✅ تم تجهيز الصورة (${buffer.length} bytes)`
+    );
 
     return buffer;
 }
 
 // ============================================================
-// انتظار جاهزية WOLF
+// انتظار الحساب
 // ============================================================
 
-async function waitForSubscriber(timeoutMs = 30000) {
+async function waitForSubscriber(timeoutMs = 60000) {
+
     const started = Date.now();
 
-    while (Date.now() - started < timeoutMs) {
+    console.log(
+        '⏳ انتظار Authorization...'
+    );
+
+    while (
+        Date.now() - started < timeoutMs
+    ) {
+
         if (service?.currentSubscriber?.id) {
+
+            console.log('');
+            console.log('========================================');
+            console.log('✅ Authorization complete');
+            console.log('========================================');
+
+            console.log(
+                `👤 الحساب: ${
+                    service.currentSubscriber.username ||
+                    service.currentSubscriber.nickname ||
+                    'غير معروف'
+                }`
+            );
+
+            console.log(
+                `🆔 ID: ${
+                    service.currentSubscriber.id
+                }`
+            );
+
             return true;
         }
 
@@ -128,86 +180,406 @@ async function waitForSubscriber(timeoutMs = 30000) {
 }
 
 // ============================================================
-// جلب الفعاليات الموجودة بالطريقة الصحيحة في wolf.js 2.7.10
+// تهيئة Handlers
+// ============================================================
+
+async function initializeHandlers() {
+
+    console.log(
+        '⚙️ تهيئة WOLF handlers...'
+    );
+
+    await service.websocket.init();
+
+    const count =
+        Object.keys(
+            service.websocket.handlers || {}
+        ).length;
+
+    console.log(
+        `⚙️ تم تحميل ${count} handlers`
+    );
+}
+
+// ============================================================
+// الاتصال باستخدام Google Chrome Profile
+//
+// مهم:
+// لا نستخدم:
+//     service.login()
+//
+// لأن wolf.js 2.7.10 يحاول وقتها طلب email/password.
+//
+// بدل ذلك:
+// Chrome Profile
+//      ↓
+// loadSession()
+//      ↓
+// token + AppCheck
+//      ↓
+// Socket.IO
+// ============================================================
+
+async function connectUsingChromeProfile(credentials) {
+
+    const token = credentials?.token;
+
+    const appCheckToken =
+        credentials?.appCheckToken || '';
+
+    const device =
+        credentials?.device || 'web';
+
+    const isAppCheckEnabled =
+        Boolean(
+            credentials?.isAppCheckEnabled ??
+            appCheckToken
+        );
+
+    if (!token) {
+        throw new Error(
+            'لم يتم العثور على v3APIToken في Google Chrome Profile.'
+        );
+    }
+
+    console.log('');
+    console.log('========================================');
+    console.log('🔐 بيانات جلسة Chrome');
+    console.log('========================================');
+
+    console.log(
+        `🔐 WOLF Token length: ${token.length}`
+    );
+
+    console.log(
+        appCheckToken
+            ? `🛡️ AppCheck length: ${appCheckToken.length}`
+            : '⚠️ AppCheck Token غير موجود'
+    );
+
+    console.log(
+        `📱 Device: ${device}`
+    );
+
+    console.log(
+        `🛡️ App Check: ${
+            isAppCheckEnabled
+                ? 'enabled'
+                : 'disabled'
+        }`
+    );
+
+    console.log('========================================');
+
+    // --------------------------------------------------------
+    // إنشاء WOLF
+    // --------------------------------------------------------
+
+    service = new WOLF();
+
+    service.config.framework.login.token =
+        token;
+
+    service.config.framework.login.onlineState =
+        OnlineState.INVISIBLE;
+
+    if (appCheckToken) {
+        service.config.framework.login.appCheckToken =
+            appCheckToken;
+    }
+
+    // --------------------------------------------------------
+    // تهيئة handlers
+    // --------------------------------------------------------
+
+    await initializeHandlers();
+
+    // --------------------------------------------------------
+    // إعداد الاتصال
+    // --------------------------------------------------------
+
+    const connection =
+        service._frameworkConfig?.get?.('connection');
+
+    const host =
+        connection?.host ||
+        'https://v3-rc.palringo.com';
+
+    const port =
+        connection?.port ?? 443;
+
+    const connectionDevice =
+        connection?.query?.device ||
+        device ||
+        'web';
+
+    console.log('');
+    console.log('========================================');
+    console.log('🔌 بدء اتصال WOLF');
+    console.log('========================================');
+
+    console.log(
+        `🌐 Host: ${host}`
+    );
+
+    console.log(
+        `🔌 Port: ${port}`
+    );
+
+    console.log(
+        `📱 Device: ${connectionDevice}`
+    );
+
+    // --------------------------------------------------------
+    // Socket.IO
+    // --------------------------------------------------------
+
+    socket = io(`${host}:${port}`, {
+
+        transports: [
+            'websocket'
+        ],
+
+        reconnection: true,
+
+        autoConnect: false,
+
+        query: {
+
+            token,
+
+            device:
+                connectionDevice,
+
+            state:
+                service.config.framework.login.onlineState,
+
+            version:
+                connection?.version ||
+                undefined,
+
+            isAppCheckEnabled:
+                isAppCheckEnabled
+                    ? 'true'
+                    : 'false',
+
+            appCheckToken:
+                isAppCheckEnabled
+                    ? appCheckToken
+                    : undefined
+        }
+    });
+
+    service.websocket.socket =
+        socket;
+
+    // --------------------------------------------------------
+    // Connected
+    // --------------------------------------------------------
+
+    socket.on('connect', () => {
+
+        console.log('');
+        console.log('========================================');
+        console.log('🔗 تم الاتصال بـ WOLF Socket.IO');
+        console.log(
+            `🔗 Connection ID: ${socket.id}`
+        );
+        console.log('========================================');
+
+    });
+
+    // --------------------------------------------------------
+    // Connection error
+    // --------------------------------------------------------
+
+    socket.on(
+        'connect_error',
+        error => {
+
+            console.error(
+                '❌ Connection error:',
+                error?.message || error
+            );
+
+        }
+    );
+
+    // --------------------------------------------------------
+    // Disconnect
+    // --------------------------------------------------------
+
+    socket.on(
+        'disconnect',
+        reason => {
+
+            console.log(
+                `🔌 Connection closed: ${reason}`
+            );
+
+        }
+    );
+
+    // --------------------------------------------------------
+    // تمرير أحداث WOLF إلى handlers
+    // --------------------------------------------------------
+
+    socket.onAny(
+        async (eventName, data) => {
+
+            try {
+
+                const handler =
+                    service.websocket
+                        .handlers?.[eventName];
+
+                if (!handler) {
+                    return;
+                }
+
+                await handler.process(
+                    data?.body ?? data
+                );
+
+            } catch (error) {
+
+                console.error(
+                    `❌ Handler error [${eventName}]:`,
+                    error?.message || error
+                );
+
+            }
+        }
+    );
+
+    // --------------------------------------------------------
+    // الاتصال
+    // --------------------------------------------------------
+
+    console.log(
+        '🔌 Connecting...'
+    );
+
+    socket.connect();
+
+    // --------------------------------------------------------
+    // انتظار Authorization
+    // --------------------------------------------------------
+
+    const ready =
+        await waitForSubscriber(
+            60000
+        );
+
+    if (!ready) {
+
+        throw new Error(
+            'WOLF اتصل لكن Authorization لم يكتمل.'
+        );
+    }
+
+    console.log('');
+    console.log(
+        '🟢 WOLF جاهز للفعاليات.'
+    );
+}
+
+// ============================================================
+// جلب الفعاليات الموجودة
 // ============================================================
 
 async function getExistingEvents() {
+
     console.log('');
-    console.log('🔍 جاري جلب فعاليات الروم بالطريقة الرسمية...');
-    console.log(`🏠 GROUP_ID: ${GROUP_ID}`);
-
-    /*
-     * في wolf.js 2.7.10:
-     *
-     * service.event.group
-     *       ↓
-     * Channel.getList()
-     *
-     * Channel.getList() يقوم داخليًا بإرسال:
-     *
-     * group event list
-     * {
-     *   id,
-     *   subscribe,
-     *   offset,
-     *   limit
-     * }
-     *
-     * ثم يستخدم event.getByIds()
-     */
-
-    const events = await service.event.group.getList(
-        GROUP_ID,
-        true,
-        true
+    console.log(
+        '🔍 جاري جلب فعاليات الروم...'
     );
 
+    console.log(
+        `🏠 GROUP_ID: ${GROUP_ID}`
+    );
+
+    const events =
+        await service.event.group.getList(
+            GROUP_ID,
+            true,
+            true
+        );
+
     if (!Array.isArray(events)) {
-        console.log('⚠️ نتيجة قائمة الفعاليات ليست Array.');
+
+        console.log(
+            '⚠️ نتيجة قائمة الفعاليات ليست Array.'
+        );
+
         console.log(events);
 
         return [];
     }
 
-    console.log(`✅ تم جلب ${events.length} فعالية موجودة.`);
+    console.log(
+        `✅ تم جلب ${events.length} فعالية موجودة.`
+    );
 
     return events;
 }
 
 // ============================================================
-// استخراج وقت الفعالية
+// أوقات الفعاليات
 // ============================================================
 
 function getEventStart(event) {
-    if (!event) return NaN;
+
+    if (!event) {
+        return NaN;
+    }
 
     if (event.startsAt instanceof Date) {
         return event.startsAt.getTime();
     }
 
-    return new Date(event.startsAt).getTime();
+    return new Date(
+        event.startsAt
+    ).getTime();
 }
 
 function getEventEnd(event) {
-    if (!event) return NaN;
+
+    if (!event) {
+        return NaN;
+    }
 
     if (event.endsAt instanceof Date) {
         return event.endsAt.getTime();
     }
 
-    return new Date(event.endsAt).getTime();
+    return new Date(
+        event.endsAt
+    ).getTime();
 }
 
 // ============================================================
 // فحص التعارض
 // ============================================================
 
-function findConflict(existingEvents, startTime, endTime) {
-    return existingEvents.find(event => {
-        const eStart = getEventStart(event);
-        const eEnd = getEventEnd(event);
+function findConflict(
+    existingEvents,
+    startTime,
+    endTime
+) {
 
-        if (!Number.isFinite(eStart) || !Number.isFinite(eEnd)) {
+    return existingEvents.find(event => {
+
+        const eStart =
+            getEventStart(event);
+
+        const eEnd =
+            getEventEnd(event);
+
+        if (
+            !Number.isFinite(eStart) ||
+            !Number.isFinite(eEnd)
+        ) {
             return false;
         }
 
@@ -223,141 +595,208 @@ function findConflict(existingEvents, startTime, endTime) {
 // ============================================================
 
 async function createEvents(existingEvents) {
+
     const createdEventIds = [];
 
-    let startTime = new Date(START_TIME);
+    let startTime =
+        new Date(START_TIME);
 
     console.log('');
     console.log('========================================');
     console.log('🚀 بدء إنشاء الفعاليات');
     console.log('========================================');
 
-    console.log(`📅 البداية: ${formatDate(startTime)}`);
-    console.log(`⏱️ مدة كل فعالية: ${EVENT_DURATION_MIN} دقيقة`);
-    console.log(`🔢 العدد المطلوب: ${TOTAL_EVENTS}`);
+    console.log(
+        `📅 البداية: ${formatDate(startTime)}`
+    );
+
+    console.log(
+        `⏱️ مدة كل فعالية: ${EVENT_DURATION_MIN} دقيقة`
+    );
+
+    console.log(
+        `🔢 العدد المطلوب: ${TOTAL_EVENTS}`
+    );
+
     console.log('');
 
-    for (let i = 0; i < TOTAL_EVENTS; i++) {
-        const endTime = new Date(
-            startTime.getTime() +
-            EVENT_DURATION_MIN * 60 * 1000
-        );
+    for (
+        let i = 0;
+        i < TOTAL_EVENTS;
+        i++
+    ) {
+
+        const endTime =
+            new Date(
+                startTime.getTime() +
+                EVENT_DURATION_MIN * 60 * 1000
+            );
 
         const number = i + 1;
 
         console.log(
             `\n[${number}/${TOTAL_EVENTS}] ` +
-            `${formatDate(startTime)} → ${formatDate(endTime)}`
+            `${formatDate(startTime)} → ` +
+            `${formatDate(endTime)}`
         );
 
-        const conflict = findConflict(
-            existingEvents,
-            startTime,
-            endTime
-        );
+        const conflict =
+            findConflict(
+                existingEvents,
+                startTime,
+                endTime
+            );
 
         if (conflict) {
-            console.log('⚠️ يوجد تعارض — تم تجاوز الفترة.');
+
+            console.log(
+                '⚠️ يوجد تعارض — تم تجاوز الفترة.'
+            );
 
             if (conflict.id) {
-                console.log(`   ↳ Event ID: ${conflict.id}`);
-            }
 
-            if (conflict.startsAt && conflict.endsAt) {
                 console.log(
-                    `   ↳ ${formatDate(new Date(conflict.startsAt))}` +
-                    ` → ${formatDate(new Date(conflict.endsAt))}`
+                    `   ↳ Event ID: ${conflict.id}`
                 );
+
             }
-        } else {
-            try {
-                /*
-                 * API الرسمية الموجودة في:
-                 *
-                 * src/helper/event/Channel.js
-                 *
-                 * create(targetChannelId, {...})
-                 */
 
-                const response = await service.event.group.create(
-                    GROUP_ID,
-                    {
-                        title: EVENT_NAME,
-                        startsAt: startTime,
-                        endsAt: endTime
-                    }
+            if (
+                conflict.startsAt &&
+                conflict.endsAt
+            ) {
+
+                console.log(
+                    `   ↳ ${formatDate(
+                        new Date(
+                            conflict.startsAt
+                        )
+                    )}` +
+                    ` → ${formatDate(
+                        new Date(
+                            conflict.endsAt
+                        )
+                    )}`
                 );
 
-                /*
-                 * create() في wolf.js 2.7.10 يعيد:
-                 *
-                 * response
-                 *
-                 * وليس الاستجابة القديمة التي كنا نرسلها يدويًا.
-                 */
+            }
+
+        } else {
+
+            try {
+
+                const response =
+                    await service.event.group.create(
+                        GROUP_ID,
+                        {
+                            title: EVENT_NAME,
+                            startsAt: startTime,
+                            endsAt: endTime
+                        }
+                    );
 
                 if (response?.success) {
-                    const eventId = response.body?.id;
+
+                    const eventId =
+                        response.body?.id;
 
                     if (eventId) {
+
                         createdEventIds.push(
-                            parseInt(eventId, 10)
+                            parseInt(
+                                eventId,
+                                10
+                            )
                         );
 
                         console.log(
                             `✅ تم إنشاء الفعالية` +
                             ` | ID: ${eventId}` +
-                            ` | الوقت: ${formatAMPM(startTime)}`
+                            ` | الوقت: ${formatAMPM(
+                                startTime
+                            )}`
                         );
 
-                        /*
-                         * نضيفها لقائمة الفعاليات حتى لا يحصل
-                         * تعارض إذا كانت هناك أي معالجة لاحقة.
-                         */
                         existingEvents.push({
-                            id: parseInt(eventId, 10),
-                            startsAt: new Date(startTime),
-                            endsAt: new Date(endTime),
-                            title: EVENT_NAME
+
+                            id:
+                                parseInt(
+                                    eventId,
+                                    10
+                                ),
+
+                            startsAt:
+                                new Date(
+                                    startTime
+                                ),
+
+                            endsAt:
+                                new Date(
+                                    endTime
+                                ),
+
+                            title:
+                                EVENT_NAME
+
                         });
+
                     } else {
+
                         console.log(
                             '⚠️ تم الإنشاء لكن لم يتم العثور على Event ID.'
                         );
 
                         console.log(
-                            JSON.stringify(response, null, 2)
+                            JSON.stringify(
+                                response,
+                                null,
+                                2
+                            )
                         );
+
                     }
+
                 } else {
-                    console.log('❌ فشل إنشاء الفعالية.');
 
                     console.log(
-                        JSON.stringify(response, null, 2)
+                        '❌ فشل إنشاء الفعالية.'
                     );
+
+                    console.log(
+                        JSON.stringify(
+                            response,
+                            null,
+                            2
+                        )
+                    );
+
                 }
+
             } catch (err) {
+
                 console.error(
                     `❌ خطأ في إنشاء الفعالية رقم ${number}:`,
                     err?.message || err
                 );
+
             }
         }
 
-        /*
-         * الانتقال إلى الفترة التالية
-         */
-        startTime = new Date(endTime.getTime());
+        startTime =
+            new Date(
+                endTime.getTime()
+            );
 
-        /*
-         * تأخير بسيط حتى لا نرسل الطلبات بسرعة كبيرة.
-         */
         await sleep(700);
     }
 
     console.log('');
     console.log('========================================');
-    console.log(`📊 تم إنشاء ${createdEventIds.length} من ${TOTAL_EVENTS}`);
+
+    console.log(
+        `📊 تم إنشاء ${createdEventIds.length} من ${TOTAL_EVENTS}`
+    );
+
     console.log('========================================');
 
     return createdEventIds;
@@ -367,10 +806,18 @@ async function createEvents(existingEvents) {
 // رفع الصور
 // ============================================================
 
-async function uploadThumbnails(eventIds, thumbnailBuffer) {
+async function uploadThumbnails(
+    eventIds,
+    thumbnailBuffer
+) {
+
     if (!eventIds.length) {
+
         console.log('');
-        console.log('ℹ️ لا توجد فعاليات جديدة لرفع الصور لها.');
+        console.log(
+            'ℹ️ لا توجد فعاليات جديدة لرفع الصور لها.'
+        );
+
         return;
     }
 
@@ -382,33 +829,41 @@ async function uploadThumbnails(eventIds, thumbnailBuffer) {
     let successCount = 0;
     let failedCount = 0;
 
-    for (let i = 0; i < eventIds.length; i++) {
-        const eventId = eventIds[i];
+    for (
+        let i = 0;
+        i < eventIds.length;
+        i++
+    ) {
+
+        const eventId =
+            eventIds[i];
 
         try {
+
             console.log(
                 `🖼️ [${i + 1}/${eventIds.length}] ` +
                 `رفع صورة ID ${eventId}...`
             );
 
-            /*
-             * API الرسمية في wolf.js 2.7.10:
-             *
-             * service.event.group.updateThumbnail()
-             */
             const response =
                 await service.event.group.updateThumbnail(
-                    parseInt(eventId, 10),
+                    parseInt(
+                        eventId,
+                        10
+                    ),
                     thumbnailBuffer
                 );
 
             if (response?.success) {
+
                 successCount++;
 
                 console.log(
                     `✅ تم رفع الصورة للفعالية ${eventId}`
                 );
+
             } else {
+
                 failedCount++;
 
                 console.log(
@@ -416,21 +871,26 @@ async function uploadThumbnails(eventIds, thumbnailBuffer) {
                 );
 
                 console.log(
-                    JSON.stringify(response, null, 2)
+                    JSON.stringify(
+                        response,
+                        null,
+                        2
+                    )
                 );
+
             }
+
         } catch (err) {
+
             failedCount++;
 
             console.error(
                 `❌ خطأ برفع صورة ID ${eventId}:`,
                 err?.message || err
             );
+
         }
 
-        /*
-         * تأخير بين رفع الصور
-         */
         await sleep(800);
     }
 
@@ -447,6 +907,7 @@ async function uploadThumbnails(eventIds, thumbnailBuffer) {
 // ============================================================
 
 async function main() {
+
     console.log('');
     console.log('========================================');
     console.log('🐺 WOLF Event Creator');
@@ -455,163 +916,88 @@ async function main() {
     console.log('');
 
     try {
+
         // --------------------------------------------------------
-        // 1. تحميل جلسة Chrome
+        // 1. قراءة Google Chrome Profile
         // --------------------------------------------------------
 
-        console.log('🌐 قراءة جلسة WOLF من Chrome Profile...');
+        console.log(
+            '🌐 قراءة جلسة WOLF من Chrome Profile...'
+        );
 
-        const credentials = await loadSession();
+        const credentials =
+            await loadSession();
 
         if (!credentials?.token) {
+
             throw new Error(
                 'لم يتم العثور على v3APIToken في جلسة Chrome.'
             );
         }
 
-        console.log('✅ تم العثور على توكن WOLF');
+        console.log(
+            '✅ تم العثور على توكن WOLF'
+        );
 
         if (credentials.appCheckToken) {
-            console.log('🛡️ تم العثور على App Check Token');
+
+            console.log(
+                `🛡️ AppCheck length: ${
+                    credentials.appCheckToken.length
+                }`
+            );
+
+            console.log(
+                '✅ تم العثور على App Check Token'
+            );
+
         } else {
-            console.log('⚠️ لا يوجد App Check Token');
-        }
-
-        // --------------------------------------------------------
-        // 2. إنشاء خدمة WOLF
-        // --------------------------------------------------------
-
-        service = new WOLF();
-
-        // --------------------------------------------------------
-        // 3. إعداد التوكن
-        // --------------------------------------------------------
-
-        service.config.framework.login.token =
-            credentials.token;
-
-        /*
-         * نخلي الحساب Invisible أثناء التشغيل.
-         */
-        if (typeof OnlineState !== 'undefined') {
-            service.config.framework.login.onlineState =
-                OnlineState.INVISIBLE;
-        }
-
-        /*
-         * App Check إذا كان موجودًا.
-         */
-        if (credentials.appCheckToken) {
-            service.config.framework.login.appCheckToken =
-                credentials.appCheckToken;
-        }
-
-        // --------------------------------------------------------
-        // 4. انتظار ready
-        // --------------------------------------------------------
-
-        let readyResolve;
-        let readyReject;
-
-        const readyPromise = new Promise((resolve, reject) => {
-            readyResolve = resolve;
-            readyReject = reject;
-        });
-
-        const readyTimeout = setTimeout(() => {
-            readyReject(
-                new Error(
-                    'انتهت مهلة انتظار WOLF ready.'
-                )
-            );
-        }, 60000);
-
-        service.once('ready', () => {
-            clearTimeout(readyTimeout);
-
-            console.log('');
-            console.log('========================================');
-            console.log('✅ WOLF جاهز');
-            console.log('========================================');
 
             console.log(
-                `👤 الحساب: ${
-                    service.currentSubscriber?.nickname || 'غير معروف'
-                }`
+                '⚠️ لا يوجد App Check Token'
             );
 
-            console.log(
-                `🆔 ID: ${
-                    service.currentSubscriber?.id || 'غير معروف'
-                }`
-            );
-
-            readyResolve();
-        });
-
-        // --------------------------------------------------------
-        // 5. معالجة أخطاء الخدمة
-        // --------------------------------------------------------
-
-        service.on('error', err => {
-            console.error(
-                '❌ WOLF Error:',
-                err?.message || err
-            );
-        });
-
-        // --------------------------------------------------------
-        // 6. تسجيل الدخول
-        // --------------------------------------------------------
-
-        console.log('🔌 بدء اتصال WOLF...');
-
-        /*
-         * بما أن التوكن مأخوذ من جلسة Chrome،
-         * لا نستخدم U_MAIL / U_PASS.
-         */
-        await service.login();
-
-        // --------------------------------------------------------
-        // 7. انتظار ready
-        // --------------------------------------------------------
-
-        await readyPromise;
-
-        const subscriberReady =
-            await waitForSubscriber(30000);
-
-        if (!subscriberReady) {
-            throw new Error(
-                'WOLF اتصل لكن currentSubscriber غير جاهز.'
-            );
         }
 
-        console.log('✅ currentSubscriber جاهز');
+        console.log(
+            `📱 Device: ${
+                credentials.device || 'web'
+            }`
+        );
 
         // --------------------------------------------------------
-        // 8. تجهيز الصورة
+        // 2. الاتصال من خلال بيانات Chrome Profile
+        // --------------------------------------------------------
+
+        await connectUsingChromeProfile(
+            credentials
+        );
+
+        // --------------------------------------------------------
+        // 3. تجهيز الصورة
         // --------------------------------------------------------
 
         const thumbnailBuffer =
             await prepareThumbnail();
 
         // --------------------------------------------------------
-        // 9. جلب الفعاليات الحالية
+        // 4. جلب الفعاليات الحالية
         // --------------------------------------------------------
 
         const existingEvents =
             await getExistingEvents();
 
         // --------------------------------------------------------
-        // 10. إنشاء الفعاليات
+        // 5. إنشاء الفعاليات
         // --------------------------------------------------------
 
         const createdEventIds =
-            await createEvents(existingEvents);
+            await createEvents(
+                existingEvents
+            );
 
         // --------------------------------------------------------
-        // 11. رفع الصور
+        // 6. رفع الصور
         // --------------------------------------------------------
 
         await uploadThumbnails(
@@ -620,7 +1006,7 @@ async function main() {
         );
 
         // --------------------------------------------------------
-        // 12. النهاية
+        // 7. النهاية
         // --------------------------------------------------------
 
         console.log('');
@@ -629,11 +1015,15 @@ async function main() {
         console.log('========================================');
 
         console.log(
-            `📅 البداية: ${formatDate(START_TIME)}`
+            `📅 البداية: ${formatDate(
+                START_TIME
+            )}`
         );
 
         console.log(
-            `⏱️ مدة الفعالية: ${EVENT_DURATION_MIN} دقيقة`
+            `⏱️ مدة الفعالية: ${
+                EVENT_DURATION_MIN
+            } دقيقة`
         );
 
         console.log(
@@ -641,7 +1031,9 @@ async function main() {
         );
 
         console.log(
-            `✅ تم إنشاء: ${createdEventIds.length}`
+            `✅ تم إنشاء: ${
+                createdEventIds.length
+            }`
         );
 
         console.log('========================================');
@@ -651,28 +1043,42 @@ async function main() {
         await shutdown(0);
 
     } catch (err) {
+
         console.error('');
         console.error('========================================');
         console.error('❌ حصل خطأ');
         console.error('========================================');
-        console.error(err?.stack || err?.message || err);
+
+        console.error(
+            err?.stack ||
+            err?.message ||
+            err
+        );
 
         await shutdown(1);
     }
 }
 
 // ============================================================
-// تشغيل
+// إيقاف
 // ============================================================
 
-process.on('SIGINT', async () => {
-    console.log('\n🛑 تم إيقاف البرنامج يدويًا.');
-    await shutdown(0);
-});
+process.on(
+    'SIGINT',
+    async () => {
+        await shutdown(0);
+    }
+);
 
-process.on('SIGTERM', async () => {
-    console.log('\n🛑 تم إيقاف البرنامج.');
-    await shutdown(0);
-});
+process.on(
+    'SIGTERM',
+    async () => {
+        await shutdown(0);
+    }
+);
+
+// ============================================================
+// START
+// ============================================================
 
 main();
