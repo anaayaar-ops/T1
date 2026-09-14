@@ -1,72 +1,42 @@
 name: WOLF Event Bot
 
-# ============================================================
-# تشغيل يدوي فقط
-# لا يوجد تشغيل تلقائي
-# ============================================================
-
 on:
   workflow_dispatch:
-
-
-# ============================================================
-# نسخة واحدة فقط
-#
-# إذا بدأ تشغيل جديد:
-# يتم إلغاء التشغيل السابق مباشرة
-# ============================================================
 
 concurrency:
   group: wolf-event-bot
   cancel-in-progress: true
 
-
-# ============================================================
-# JOB
-# ============================================================
-
 jobs:
-
   wolf:
-
     runs-on: ubuntu-latest
 
-    # حماية من تعليق البوت لفترة طويلة
-    # المهمة الطبيعية يفترض أن تنتهي خلال دقائق
     timeout-minutes: 30
 
-
     steps:
-
       # ======================================================
       # Checkout
       # ======================================================
 
       - name: Checkout repository
-
         uses: actions/checkout@v6
-
 
       # ======================================================
       # Node.js
       # ======================================================
 
       - name: Setup Node.js
-
         uses: actions/setup-node@v7
-
         with:
           node-version: "20"
-
+          cache: "npm"
 
       # ======================================================
       # Install Dependencies
       # ======================================================
 
       - name: Install dependencies
-
         run: |
-
           echo ""
           echo "========================================"
           echo "📦 Installing dependencies"
@@ -76,121 +46,86 @@ jobs:
 
           echo ""
           echo "========================================"
+          echo "🌐 Installing Playwright Chromium"
+          echo "========================================"
+
+          npx playwright install --with-deps chromium
+
+          echo ""
+          echo "========================================"
           echo "✅ Dependencies installed"
           echo "========================================"
 
-
       # ======================================================
-      # Check WOLF Profile
+      # Check Profile URL
       # ======================================================
 
       - name: Check WOLF Profile Secret
-
         env:
           WOLF_PROFILE_URL: ${{ secrets.WOLF_PROFILE_URL }}
-
         run: |
-
           echo ""
           echo "========================================"
           echo "🔐 Checking WOLF Profile"
           echo "========================================"
 
           if [ -z "$WOLF_PROFILE_URL" ]; then
-
             echo "❌ WOLF_PROFILE_URL is NOT available"
-
             exit 1
-
           fi
 
           echo "✅ WOLF_PROFILE_URL is available"
 
           echo "========================================"
 
-
       # ======================================================
-      # Run WOLF Event Task
+      # Run Bot
       # ======================================================
 
       - name: Run WOLF Event Task
-
         env:
           WOLF_PROFILE_URL: ${{ secrets.WOLF_PROFILE_URL }}
-
         run: |
-
           echo ""
           echo "========================================"
           echo "🐺 WOLF EVENT BOT"
           echo "========================================"
 
           echo "🕐 Start: $(date)"
-
           echo "🎯 المهمة: إنشاء الفعاليات + رفع الصور"
-
           echo "📱 DEVICE: web"
-
           echo "🛡️ APP CHECK: true"
 
           echo "========================================"
 
-
-          # ==================================================
-          # تشغيل البوت بشكل مباشر
-          #
-          # لا يوجد:
-          # - تشغيل 4 ساعات
-          # - تشغيل 5 ساعات
-          # - while loop
-          # - sleep
-          # - مراقبة مستمرة
-          #
-          # npm start ينفذ المهمة ثم check-wolf.js
-          # يغلق نفسه بعد انتهاء المهمة.
-          # ==================================================
-
           npm start
 
-
           EXIT_CODE=$?
-
 
           echo ""
           echo "========================================"
 
           if [ "$EXIT_CODE" -eq 0 ]; then
-
             echo "✅ WOLF EVENT TASK COMPLETED"
-
             echo "🎯 تم تنفيذ المهمة بنجاح"
-
           else
-
             echo "❌ WOLF EVENT TASK FAILED"
-
             echo "Exit code: $EXIT_CODE"
-
           fi
 
           echo "🕐 End: $(date)"
 
           echo "========================================"
 
-
           exit "$EXIT_CODE"
 
-
       # ======================================================
-      # Final Cleanup
+      # Cleanup
       # ======================================================
 
       - name: Final Cleanup
-
         if: always()
-
         run: |
-
           echo ""
           echo "========================================"
           echo "🧹 FINAL CLEANUP"
