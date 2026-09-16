@@ -8,27 +8,54 @@ import {
 
 const { WOLF, OnlineState } = wolfjs;
 
-// ==================== ⚙️ البيانات الثابتة (عدّل حسب حاجتك) ====================
+// ============================================================
+// ⚙️ الإعدادات
+// ============================================================
+
 const settings = {
-    targetBotId: 51660277,
-    actionWord: "!صيد 3",
-    delayBetweenHeists: 11000,      // 11 ثانية فاصل بين الصيد
-    workDuration: 54 * 60 * 1000,   // 54 دقيقة عمل
-    restDuration: 6 * 60 * 1000     // 6 دقائق راحة
+
+    // القناة التي سيتم الإرسال إليها
+    channelId: 224,
+
+    // ========================================================
+    // المهمة الأولى: هجوم
+    // ========================================================
+    attack: {
+        message: "!ملوك هجوم",
+        repeat: 3,
+        gapMs: 1000,           // ثانية بين كل رسالة
+        waitMs: 5 * 60 * 1000 + 1000  // 5:01 دقائق
+    },
+
+    // ========================================================
+    // المهمة الثانية: تدريب
+    // ========================================================
+    training: {
+        message: "ملوك تدريب",
+        repeat: 1,
+        gapMs: 0,
+        waitMs: 2 * 60 * 1000 + 1000  // 2:01 دقائق
+    },
+
+    // ========================================================
+    // المهمة الثالثة: مرتزقة
+    // ========================================================
+    mercenary: {
+        message: "!ملوك مرتزقة 🪶",
+        repeat: 3,
+        gapMs: 1000,           // ثانية بين كل رسالة
+        waitMs: 10 * 60 * 1000 + 1000 // 10:01 دقائق
+    }
 };
-// =============================================================================
 
 // ============================================================
-// متغيرات الاتصال
+// ⚙️ متغيرات الاتصال
 // ============================================================
 
 let service = null;
 let socket = null;
 let browserClosed = false;
-
-let heistQueue = [];
-let isProcessing = false;
-let isResting = false;
+let running = true;
 
 // ============================================================
 // أدوات مساعدة
@@ -43,49 +70,36 @@ const sleep = ms =>
 
 async function shutdown(code = 0) {
 
+    running = false;
+
     console.log('');
     console.log('========================================');
     console.log('🛑 جاري إنهاء التشغيل...');
     console.log('========================================');
 
     try {
-
-        if (socket) {
-            socket.disconnect();
-        }
-
+        if (socket) socket.disconnect();
     } catch {}
 
     try {
-
         if (service?.websocket?.socket) {
             service.websocket.socket.disconnect();
         }
-
     } catch {}
 
     try {
-
         if (!browserClosed) {
-
             browserClosed = true;
-
             await closeSessionBrowser();
         }
-
     } catch (err) {
-
         console.log(
             '⚠️ تعذر إغلاق جلسة Chrome:',
             err?.message || err
         );
-
     }
 
-    console.log(
-        `🏁 انتهى البرنامج — Code ${code}`
-    );
-
+    console.log(`🏁 انتهى البرنامج — Code ${code}`);
     process.exit(code);
 }
 
@@ -93,25 +107,15 @@ async function shutdown(code = 0) {
 // انتظار Authorization
 // ============================================================
 
-async function waitForSubscriber(
-    timeoutMs = 60000
-) {
+async function waitForSubscriber(timeoutMs = 60000) {
 
-    const started =
-        Date.now();
+    const started = Date.now();
 
-    console.log(
-        '⏳ انتظار Authorization...'
-    );
+    console.log('⏳ انتظار Authorization...');
 
-    while (
-        Date.now() - started <
-        timeoutMs
-    ) {
+    while (Date.now() - started < timeoutMs) {
 
-        if (
-            service?.currentSubscriber?.id
-        ) {
+        if (service?.currentSubscriber?.id) {
 
             console.log('');
             console.log('========================================');
@@ -127,9 +131,7 @@ async function waitForSubscriber(
             );
 
             console.log(
-                `🆔 ID: ${
-                    service.currentSubscriber.id
-                }`
+                `🆔 ID: ${service.currentSubscriber.id}`
             );
 
             return true;
@@ -147,47 +149,32 @@ async function waitForSubscriber(
 
 async function initializeHandlers() {
 
-    console.log(
-        '⚙️ تهيئة WOLF handlers...'
-    );
+    console.log('⚙️ تهيئة WOLF handlers...');
 
     await service.websocket.init();
 
-    const count =
-        Object.keys(
-            service.websocket.handlers || {}
-        ).length;
+    const count = Object.keys(
+        service.websocket.handlers || {}
+    ).length;
 
-    console.log(
-        `⚙️ تم تحميل ${count} handlers`
-    );
+    console.log(`⚙️ تم تحميل ${count} handlers`);
 }
 
 // ============================================================
-// الاتصال باستخدام Google Chrome Profile
+// الاتصال باستخدام Chrome Profile
 // ============================================================
 
-async function connectUsingChromeProfile(
-    credentials
-) {
+async function connectUsingChromeProfile(credentials) {
 
-    const token =
-        credentials?.token;
+    const token = credentials?.token;
+    const appCheckToken = credentials?.appCheckToken || '';
+    const device = credentials?.device || 'web';
 
-    const appCheckToken =
-        credentials?.appCheckToken || '';
-
-    const device =
-        credentials?.device || 'web';
-
-    const isAppCheckEnabled =
-        Boolean(
-            credentials?.isAppCheckEnabled ??
-            appCheckToken
-        );
+    const isAppCheckEnabled = Boolean(
+        credentials?.isAppCheckEnabled ?? appCheckToken
+    );
 
     if (!token) {
-
         throw new Error(
             'لم يتم العثور على v3APIToken في Google Chrome Profile.'
         );
@@ -198,370 +185,236 @@ async function connectUsingChromeProfile(
     console.log('🔐 بيانات جلسة Chrome');
     console.log('========================================');
 
-    console.log(
-        `🔐 WOLF Token length: ${token.length}`
-    );
-
+    console.log(`🔐 WOLF Token length: ${token.length}`);
     console.log(
         appCheckToken
             ? `🛡️ AppCheck length: ${appCheckToken.length}`
             : '⚠️ AppCheck Token غير موجود'
     );
-
-    console.log(
-        `📱 Device: ${device}`
-    );
-
+    console.log(`📱 Device: ${device}`);
     console.log(
         `🛡️ App Check: ${
-            isAppCheckEnabled
-                ? 'enabled'
-                : 'disabled'
+            isAppCheckEnabled ? 'enabled' : 'disabled'
         }`
     );
-
     console.log('========================================');
-
-    // ========================================================
-    // إنشاء WOLF
-    // ========================================================
 
     service = new WOLF();
 
-    service.config.framework.login.token =
-        token;
-
+    service.config.framework.login.token = token;
     service.config.framework.login.onlineState =
-        OnlineState.INVISIBLE;
+        OnlineState.BUSY;
 
     if (appCheckToken) {
-
         service.config.framework.login.appCheckToken =
             appCheckToken;
     }
 
-    // ========================================================
-    // تهيئة Handlers
-    // ========================================================
-
     await initializeHandlers();
 
-    // ========================================================
-    // إعداد الاتصال
-    // ========================================================
-
     const connection =
-        service._frameworkConfig?.get?.(
-            'connection'
-        );
+        service._frameworkConfig?.get?.('connection');
 
     const host =
-        connection?.host ||
-        'https://v3-rc.palringo.com';
+        connection?.host || 'https://v3-rc.palringo.com';
 
-    const port =
-        connection?.port ?? 443;
+    const port = connection?.port ?? 443;
 
     const connectionDevice =
-        connection?.query?.device ||
-        device ||
-        'web';
+        connection?.query?.device || device || 'web';
 
     console.log('');
     console.log('========================================');
     console.log('🔌 بدء اتصال WOLF');
     console.log('========================================');
+    console.log(`🌐 Host: ${host}`);
+    console.log(`🔌 Port: ${port}`);
+    console.log(`📱 Device: ${connectionDevice}`);
+    console.log('👻 Online State: INVISIBLE');
 
-    console.log(
-        `🌐 Host: ${host}`
-    );
-
-    console.log(
-        `🔌 Port: ${port}`
-    );
-
-    console.log(
-        `📱 Device: ${connectionDevice}`
-    );
-
-    // ========================================================
-    // Socket.IO
-    // ========================================================
-
-    socket =
-        io(
-            `${host}:${port}`,
-            {
-                transports: [
-                    'websocket'
-                ],
-
-                reconnection: true,
-
-                autoConnect: false,
-
-                query: {
-
-                    token,
-
-                    device:
-                        connectionDevice,
-
-                    state:
-                        service.config.framework
-                            .login.onlineState,
-
-                    version:
-                        connection?.version ||
-                        undefined,
-
-                    isAppCheckEnabled:
-                        isAppCheckEnabled
-                            ? 'true'
-                            : 'false',
-
-                    appCheckToken:
-                        isAppCheckEnabled
-                            ? appCheckToken
-                            : undefined
-                }
+    socket = io(
+        `${host}:${port}`,
+        {
+            transports: ['websocket'],
+            reconnection: true,
+            autoConnect: false,
+            query: {
+                token,
+                device: connectionDevice,
+                state:
+                    service.config.framework
+                        .login.onlineState,
+                version: connection?.version || undefined,
+                isAppCheckEnabled:
+                    isAppCheckEnabled ? 'true' : 'false',
+                appCheckToken:
+                    isAppCheckEnabled
+                        ? appCheckToken
+                        : undefined
             }
-        );
-
-    service.websocket.socket =
-        socket;
-
-    // ========================================================
-    // Connected
-    // ========================================================
-
-    socket.on(
-        'connect',
-        () => {
-
-            console.log('');
-            console.log('========================================');
-            console.log(
-                '🔗 تم الاتصال بـ WOLF Socket.IO'
-            );
-            console.log(
-                `🔗 Connection ID: ${socket.id}`
-            );
-            console.log('========================================');
-
         }
     );
 
-    // ========================================================
-    // Connection error
-    // ========================================================
+    service.websocket.socket = socket;
 
-    socket.on(
-        'connect_error',
-        error => {
+    socket.on('connect', () => {
+        console.log('');
+        console.log('========================================');
+        console.log('🔗 تم الاتصال بـ WOLF Socket.IO');
+        console.log(`🔗 Connection ID: ${socket.id}`);
+        console.log('👻 الحالة: Invisible');
+        console.log('========================================');
+    });
 
+    socket.on('connect_error', error => {
+        console.error(
+            '❌ Connection error:',
+            error?.message || error
+        );
+    });
+
+    socket.on('disconnect', reason => {
+        console.log(`🔌 Connection closed: ${reason}`);
+    });
+
+    socket.onAny(async (eventName, data) => {
+        try {
+            if (eventName === 'group event update') return;
+
+            const handler =
+                service.websocket.handlers?.[eventName];
+
+            if (!handler) return;
+
+            await handler.process(data?.body ?? data);
+
+        } catch (error) {
             console.error(
-                '❌ Connection error:',
+                `❌ Handler error [${eventName}]:`,
                 error?.message || error
             );
-
         }
-    );
+    });
 
-    // ========================================================
-    // Disconnect
-    // ========================================================
-
-    socket.on(
-        'disconnect',
-        reason => {
-
-            console.log(
-                `🔌 Connection closed: ${reason}`
-            );
-
-        }
-    );
-
-    // ========================================================
-    // تمرير أحداث WOLF إلى Handlers (بما فيها الرسائل)
-    // ========================================================
-
-    socket.onAny(
-        async (
-            eventName,
-            data
-        ) => {
-
-            try {
-
-                if (
-                    eventName ===
-                    'group event update'
-                ) {
-
-                    return;
-                }
-
-                const handler =
-                    service.websocket
-                        .handlers?.[eventName];
-
-                if (!handler) {
-                    return;
-                }
-
-                await handler.process(
-                    data?.body ?? data
-                );
-
-            } catch (error) {
-
-                console.error(
-                    `❌ Handler error [${eventName}]:`,
-                    error?.message || error
-                );
-
-            }
-
-        }
-    );
-
-    // ========================================================
-    // الاتصال
-    // ========================================================
-
-    console.log(
-        '🔌 Connecting...'
-    );
+    console.log('🔌 Connecting...');
 
     socket.connect();
 
-    // ========================================================
-    // انتظار Authorization
-    // ========================================================
-
-    const ready =
-        await waitForSubscriber(
-            60000
-        );
+    const ready = await waitForSubscriber(60000);
 
     if (!ready) {
-
         throw new Error(
             'WOLF اتصل لكن Authorization لم يكتمل.'
         );
     }
 
     console.log('');
-    console.log(
-        '🟢 WOLF جاهز لمراقبة الرسائل.'
-    );
+    console.log('🟢 WOLF جاهز.');
 }
 
 // ============================================================
-// معالجة طابور الصيد
+// إرسال رسالة إلى القناة
 // ============================================================
 
-const processQueue = async () => {
+async function sendToChannel(text) {
 
-    if (isProcessing || heistQueue.length === 0 || isResting) return;
+    try {
 
-    isProcessing = true;
+        await service.messaging.sendGroupMessage(
+            settings.channelId,
+            text
+        );
 
-    while (heistQueue.length > 0 && !isResting) {
+        console.log(
+            `🚀 [${settings.channelId}] ← "${text}"`
+        );
 
-        const roomId = heistQueue.shift();
+    } catch (err) {
 
-        console.log(`⏳ انتظار الاستراحة بين الصيد... الروم: ${roomId}`);
-        await sleep(settings.delayBetweenHeists);
+        console.error(
+            `❌ فشل إرسال "${text}":`,
+            err?.message || err
+        );
+    }
+}
 
-        if (isResting) {
-            heistQueue.unshift(roomId);
-            break;
-        }
+// ============================================================
+// حلقة مهمة عامة
+// ============================================================
+
+async function taskLoop(name, config) {
+
+    while (running) {
 
         try {
 
-            // نظام فحص إصدار المكتبة للانضمام للروم
-            if (service.groups && typeof service.groups.join === 'function') {
-                await service.groups.join(roomId).catch(() => {});
-            } else if (service.group && typeof service.group.join === 'function') {
-                await service.group.join(roomId).catch(() => {});
-            } else if (typeof service.joinGroup === 'function') {
-                await service.joinGroup(roomId).catch(() => {});
+            console.log('');
+            console.log(
+                `▶️ [${name}] بدء الجولة — إرسال ${config.repeat} مرة`
+            );
+
+            for (let i = 0; i < config.repeat; i++) {
+
+                if (!running) return;
+
+                await sendToChannel(config.message);
+
+                if (
+                    i < config.repeat - 1 &&
+                    config.gapMs > 0
+                ) {
+                    await sleep(config.gapMs);
+                }
             }
 
-            // إرسال رسالة الصيد
-            await service.messaging.sendGroupMessage(roomId, settings.actionWord);
-            console.log(`🚀 [${new Date().toLocaleTimeString('ar-SA')}] تم الصيد في [${roomId}]. المتبقي في الطابور: ${heistQueue.length}`);
+            const waitSec = Math.round(
+                config.waitMs / 1000
+            );
+
+            console.log(
+                `⏳ [${name}] انتظار ${waitSec} ثانية...`
+            );
+
+            await sleep(config.waitMs);
 
         } catch (err) {
 
-            console.error(`❌ فشل الصيد في الروم ${roomId}: ${err.message}`);
+            console.error(
+                `❌ [${name}] خطأ في الحلقة:`,
+                err?.message || err
+            );
+
+            await sleep(5000);
         }
     }
-
-    isProcessing = false;
-};
+}
 
 // ============================================================
-// نظام إدارة الوقت (54/6)
+// تشغيل المهام الثلاث
 // ============================================================
 
-const manageWorkCycle = async () => {
+function startTasks() {
 
-    while (true) {
+    console.log('');
+    console.log('========================================');
+    console.log('⚙️ تشغيل المهام');
+    console.log('========================================');
+    console.log(`🏠 القناة: ${settings.channelId}`);
+    console.log(
+        `1️⃣ هجوم    : "${settings.attack.message}" × ${settings.attack.repeat} كل 5:01 د`
+    );
+    console.log(
+        `2️⃣ تدريب   : "${settings.training.message}" × ${settings.training.repeat} كل 2:01 د`
+    );
+    console.log(
+        `3️⃣ مرتزقة  : "${settings.mercenary.message}" × ${settings.mercenary.repeat} كل 10:01 د`
+    );
+    console.log('========================================');
 
-        console.log("🟢 [نظام الوقت] بدأت دورة الـ 54 دقيقة عمل.");
-        isResting = false;
-        processQueue();
-
-        await sleep(settings.workDuration);
-
-        console.log("🛑 [نظام الوقت] بدأت دورة الـ 6 دقائق راحة. يتوقف الصيد مؤقتاً.");
-        isResting = true;
-
-        await sleep(settings.restDuration);
-    }
-};
-
-// ============================================================
-// مراقبة الرسائل الخاصة من البوت المستهدف
-// ============================================================
-
-function attachMessageListener() {
-
-    service.on('message', async (message) => {
-
-        // التقاط رسائل الصيد من البوت المستهدف
-        if (!message.isGroup && (message.sourceSubscriberId === settings.targetBotId || message.authorId === settings.targetBotId)) {
-
-            const content = message.body || message.content || "";
-
-            // المحاولة الأولى: البحث بالطريقة الإنجليزية (ID + رقم)
-            let match = content.match(/\(ID\s*(\d+)\)/);
-
-            // إذا لم يجد شيئاً، المحاولة الثانية: البحث بالطريقة العربية مع تجاهل أي رموز مخفية قبل الرقم
-            if (!match) {
-                match = content.match(/\[.*?\]\s*\(\s*[\s\u200B]*(\d+)/);
-            }
-
-            if (match && match[1]) {
-
-                const roomId = parseInt(match[1]);
-                console.log(`📥 إضافة الروم ${roomId} إلى الطابور...`);
-
-                heistQueue.push(roomId);
-
-                if (!isResting) {
-                    processQueue();
-                } else {
-                    console.log(`⏳ استراحة حالياً. سيتم معالجة الروم ${roomId} فور العودة للعمل.`);
-                }
-            }
-        }
-    });
+    // تشغيل المهام بالتوازي — كل واحدة مستقلة تماماً
+    taskLoop('هجوم', settings.attack);
+    taskLoop('تدريب', settings.training);
+    taskLoop('مرتزقة', settings.mercenary);
 }
 
 // ============================================================
@@ -572,85 +425,61 @@ async function main() {
 
     console.log('');
     console.log('========================================');
-    console.log('🐺 WOLF Heist Watcher');
+    console.log('🐺 WOLF Bot — Multi-Task');
     console.log('🐺 wolf.js 2.7.10');
     console.log('========================================');
     console.log('');
 
     try {
 
-        // ====================================================
-        // 1. قراءة Google Chrome Profile
-        // ====================================================
-
         console.log(
             '🌐 قراءة جلسة WOLF من Chrome Profile...'
         );
 
-        const credentials =
-            await loadSession();
+        const credentials = await loadSession();
 
         if (!credentials?.token) {
-
             throw new Error(
                 'لم يتم العثور على v3APIToken في جلسة Chrome.'
             );
         }
 
-        console.log(
-            '✅ تم العثور على توكن WOLF'
-        );
+        console.log('✅ تم العثور على توكن WOLF');
 
         if (credentials.appCheckToken) {
-
             console.log(
-                `🛡️ AppCheck length: ${
-                    credentials.appCheckToken.length
-                }`
+                `🛡️ AppCheck length: ${credentials.appCheckToken.length}`
             );
-
-            console.log(
-                '✅ تم العثور على App Check Token'
-            );
-
+            console.log('✅ تم العثور على App Check Token');
         } else {
-
-            console.log(
-                '⚠️ لا يوجد App Check Token'
-            );
+            console.log('⚠️ لا يوجد App Check Token');
         }
 
         console.log(
-            `📱 Device: ${
-                credentials.device || 'web'
-            }`
+            `📱 Device: ${credentials.device || 'web'}`
         );
 
-        // ====================================================
-        // 2. الاتصال باستخدام Chrome Profile
-        // ====================================================
+        await connectUsingChromeProfile(credentials);
 
-        await connectUsingChromeProfile(
-            credentials
-        );
+        // ضبط الحالة Invisible
+        try {
+            await service.setOnlineState(OnlineState.BUSY);
+            console.log('👻 تم ضبط الحالة إلى Invisible');
+        } catch (err) {
+            console.log(
+                '⚠️ تعذر ضبط الحالة عبر API:',
+                err?.message || err
+            );
+        }
 
-        // ====================================================
-        // 3. تفعيل مراقبة الرسائل الخاصة
-        // ====================================================
+        // تشغيل المهام
+        startTasks();
 
-        attachMessageListener();
-
-        console.log(
-            `👂 جاري مراقبة رسائل البوت المستهدف (${settings.targetBotId})...`
-        );
-
-        // ====================================================
-        // 4. بدء دورة العمل/الراحة (54/6)
-        // ====================================================
-
-        manageWorkCycle();
-
-        // البرنامج يبقى شغال إلى أن يتم إيقافه يدويًا (SIGINT/SIGTERM)
+        console.log('');
+        console.log('========================================');
+        console.log('🟢 البوت يعمل الآن');
+        console.log('👻 الحالة: Invisible');
+        console.log('========================================');
 
     } catch (err) {
 
@@ -660,9 +489,7 @@ async function main() {
         console.error('========================================');
 
         console.error(
-            err?.stack ||
-            err?.message ||
-            err
+            err?.stack || err?.message || err
         );
 
         await shutdown(1);
@@ -670,7 +497,7 @@ async function main() {
 }
 
 // ============================================================
-// إيقاف
+// إيقاف آمن
 // ============================================================
 
 process.on('SIGINT', async () => {
