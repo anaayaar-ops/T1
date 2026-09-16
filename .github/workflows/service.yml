@@ -1,32 +1,33 @@
 name: WOLF Event Bot
 
 on:
+  schedule:
+    - cron: '0 */4 * * *'   # كل 4 ساعات
   workflow_dispatch:
 
 concurrency:
   group: wolf-event-bot
-  cancel-in-progress: true
+  cancel-in-progress: true   # يقتل النسخة السابقة عند بدء نسخة جديدة
 
 jobs:
   wolf:
     runs-on: ubuntu-latest
 
-    timeout-minutes: 30
+    # 5 ساعات كحد أقصى (الحد المجاني 6 ساعات)
+    timeout-minutes: 300
 
     steps:
       # ======================================================
       # Checkout
       # ======================================================
-
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       # ======================================================
       # Node.js
       # ======================================================
-
       - name: Setup Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: "npm"
@@ -34,112 +35,81 @@ jobs:
       # ======================================================
       # Install Dependencies
       # ======================================================
-
       - name: Install dependencies
         run: |
-          echo ""
-          echo "========================================"
-          echo "📦 Installing dependencies"
-          echo "========================================"
-
+          echo "📦 Installing dependencies..."
           npm install
-
-          echo ""
-          echo "========================================"
-          echo "🌐 Installing Playwright Chromium"
-          echo "========================================"
-
+          echo "🌐 Installing Playwright Chromium..."
           npx playwright install --with-deps chromium
-
-          echo ""
-          echo "========================================"
           echo "✅ Dependencies installed"
-          echo "========================================"
+
+      # ======================================================
+      # Restore Profile from Cache
+      # ======================================================
+      - name: Restore WOLF profile from cache
+        id: profile-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ./profile-cache
+          key: wolf-profile-${{ github.run_id }}
+          restore-keys: |
+            wolf-profile-
+
+      - name: Profile cache status
+        run: |
+          if [ -d "./profile-cache/user-data" ] && [ -n "$(ls -A ./profile-cache/user-data 2>/dev/null)" ]; then
+            echo "✅ Cache موجود — سيتم استخدام البروفايل المُحدَّث"
+            du -sh ./profile-cache/user-data || true
+          else
+            echo "ℹ️ لا يوجد Cache — سيتم التنزيل من Google Drive"
+          fi
 
       # ======================================================
       # Check Profile URL
       # ======================================================
-
       - name: Check WOLF Profile Secret
         env:
           WOLF_PROFILE_URL: ${{ secrets.WOLF_PROFILE_URL }}
         run: |
-          echo ""
-          echo "========================================"
-          echo "🔐 Checking WOLF Profile"
-          echo "========================================"
-
           if [ -z "$WOLF_PROFILE_URL" ]; then
             echo "❌ WOLF_PROFILE_URL is NOT available"
             exit 1
           fi
-
           echo "✅ WOLF_PROFILE_URL is available"
-
-          echo "========================================"
 
       # ======================================================
       # Run Bot
       # ======================================================
-
       - name: Run WOLF Event Task
         env:
           WOLF_PROFILE_URL: ${{ secrets.WOLF_PROFILE_URL }}
+          PROFILE_CACHE_DIR: ${{ github.workspace }}/profile-cache
         run: |
-          echo ""
-          echo "========================================"
-          echo "🐺 WOLF EVENT BOT"
-          echo "========================================"
-
           echo "🕐 Start: $(date)"
-          echo "🎯 المهمة: إنشاء الفعاليات + رفع الصور"
-          echo "📱 DEVICE: web"
+          echo "🎯 DEVICE: web"
           echo "🛡️ APP CHECK: true"
-
-          echo "========================================"
-
           npm start
-
           EXIT_CODE=$?
-
-          echo ""
-          echo "========================================"
-
-          if [ "$EXIT_CODE" -eq 0 ]; then
-            echo "✅ WOLF EVENT TASK COMPLETED"
-            echo "🎯 تم تنفيذ المهمة بنجاح"
-          else
-            echo "❌ WOLF EVENT TASK FAILED"
-            echo "Exit code: $EXIT_CODE"
-          fi
-
           echo "🕐 End: $(date)"
+          exit $EXIT_CODE
 
-          echo "========================================"
-
-          exit "$EXIT_CODE"
+      # ======================================================
+      # Save Refreshed Profile to Cache
+      # ======================================================
+      - name: Save WOLF profile to cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ./profile-cache
+          key: wolf-profile-${{ github.run_id }}
 
       # ======================================================
       # Cleanup
       # ======================================================
-
       - name: Final Cleanup
         if: always()
         run: |
-          echo ""
-          echo "========================================"
-          echo "🧹 FINAL CLEANUP"
-          echo "========================================"
-
-          echo "🛑 التأكد من عدم وجود WOLF process..."
-
           pkill -TERM -f "node check-wolf.js" 2>/dev/null || true
-
           sleep 2
-
           pkill -KILL -f "node check-wolf.js" 2>/dev/null || true
-
-          echo ""
-          echo "✅ Final cleanup completed"
-
-          echo "========================================"
+          echo "✅ Cleanup done"
