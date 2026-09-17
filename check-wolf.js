@@ -1,5 +1,5 @@
 // ============================================================
-// WOLF Bot — check-wolf.js
+// WOLF Bot — check-wolf.js (النسخة النهائية)
 // ============================================================
 
 // ---------- تسجيل أخطاء عام قبل أي شيء ----------
@@ -130,7 +130,7 @@ async function waitForSubscriber(timeoutMs = 60000) {
 }
 
 // ============================================================
-// الاتصال
+// تهيئة المعالجات
 // ============================================================
 
 async function initializeHandlers() {
@@ -140,25 +140,34 @@ async function initializeHandlers() {
     console.log(`⚙️ تم تحميل ${count} handlers`);
 }
 
+// ============================================================
+// الاتصال باستخدام Chrome Profile
+// ============================================================
+
 async function connectUsingChromeProfile(credentials) {
     const token = credentials?.token;
     const appCheckToken = credentials?.appCheckToken || '';
     const device = credentials?.device || 'web';
-    const isAppCheckEnabled = Boolean(credentials?.isAppCheckEnabled ?? appCheckToken);
+
+    // ✅ التعديل الجوهري: منع الاتصال إذا لم يوجد appCheckToken
+    if (!appCheckToken) {
+        throw new Error('❌ لا يمكن الاتصال بـ WOLF بدون appCheckToken. تأكد من أن الجلسة صالحة، أو انتظر حتى يتم توليده.');
+    }
+
+    const isAppCheckEnabled = true; // دائماً true طالما لدينا الرمز
 
     if (!token) throw new Error('لم يتم العثور على v3APIToken.');
 
     console.log('🔐 Token length:', token.length);
-    console.log('🛡️ AppCheck:', appCheckToken ? appCheckToken.length : 'none');
+    console.log('🛡️ AppCheck length:', appCheckToken.length);
     console.log('📱 Device:', device);
 
     service = new wolfjs.WOLF();
     service.config.framework.login.token = token;
     service.config.framework.login.onlineState = OnlineState.BUSY;
 
-    if (appCheckToken) {
-        service.config.framework.login.appCheckToken = appCheckToken;
-    }
+    // ✅ دائماً نمرر الرمز
+    service.config.framework.login.appCheckToken = appCheckToken;
 
     await initializeHandlers();
 
@@ -180,8 +189,8 @@ async function connectUsingChromeProfile(credentials) {
             device: connectionDevice,
             state: service.config.framework.login.onlineState,
             version: connection?.version || undefined,
-            isAppCheckEnabled: isAppCheckEnabled ? 'true' : 'false',
-            appCheckToken: isAppCheckEnabled ? appCheckToken : undefined
+            isAppCheckEnabled: 'true', // ✅ دائماً true
+            appCheckToken: appCheckToken  // ✅ دائماً نرسل الرمز
         }
     });
 
