@@ -160,13 +160,15 @@ function extractProfile(buffer) {
 }
 
 // ============================================================
-// قراءة التوكنات
+// قراءة التوكنات (البحث الشامل في LocalStorage و IndexedDB)
 // ============================================================
 
 async function readWolfTokens(page) {
-    return await page.evaluate(() => {
+    return await page.evaluate(async () => {
         const result = { token: null, appCheckToken: null };
-        const scan = (storage) => {
+
+        // 1. البحث في LocalStorage و SessionStorage
+        const scanStorage = (storage) => {
             try {
                 for (let i = 0; i < storage.length; i++) {
                     const key = storage.key(i);
@@ -179,8 +181,51 @@ async function readWolfTokens(page) {
                 }
             } catch {}
         };
-        scan(localStorage);
-        scan(sessionStorage);
+        scanStorage(localStorage);
+        scanStorage(sessionStorage);
+
+        if (result.appCheckToken && result.token) return result;
+
+        // 2. البحث في IndexedDB (المكان الذي يختبئ فيه Firebase عادةً)
+        try {
+            const databases = await indexedDB.databases();
+            for (const dbInfo of databases) {
+                if (!dbInfo.name) continue;
+                const db = await new Promise((resolve) => {
+                    const req = indexedDB.open(dbInfo.name);
+                    req.onsuccess = () => resolve(req.result);
+                    req.onerror = () => resolve(null);
+                });
+                if (!db) continue;
+
+                if (db.objectStoreNames.contains('firebaseLocalStorage')) {
+                    const tx = db.transaction('firebaseLocalStorage', 'readonly');
+                    const store = tx.objectStore('firebaseLocalStorage');
+                    const allRecords = await new Promise((resolve) => {
+                        const req = store.getAll();
+                        req.onsuccess = () => resolve(req.result);
+                        req.onerror = () => resolve([]);
+                    });
+
+                    for (const record of allRecords) {
+                        if (record && record.value && record.value.key) {
+                            const k = record.value.key.toLowerCase();
+                            const v = record.value.value;
+                            if (!result.token && (k.includes('v3apitoken') || k.includes('v3_api_token'))) {
+                                result.token = v;
+                            }
+                            if (!result.appCheckToken && (k.includes('appchecktoken') || k.includes('app_check_token'))) {
+                                result.appCheckToken = v;
+                            }
+                        }
+                    }
+                }
+                db.close();
+            }
+        } catch (e) {
+            // تجاهل أخطاء IndexedDB
+        }
+
         return result;
     });
 }
@@ -254,27 +299,36 @@ export async function loadSession() {
 
     const page = await launchWolfBrowser(userDataDir);
 
-    console.log('⏳ انتظار جلسة WOLF...');
+    console.log('⏳ انتظار جلسة WOLF وتوليد appCheckToken (قد يستغرق دقيقة)...');
     await sleep(5000);
 
     let credentials = { token: null, appCheckToken: null };
+    let attempts = 0;
+    const maxAttempts = 90; // 90 ثانية كحد أقصى
 
-    for (let i = 1; i <= 60; i++) {
+    while (attempts < maxAttempts) {
         credentials = await readWolfTokens(page);
-        console.log(`⏳ قراءة credentials: ${i}/60`);
+        console.log(`⏳ محاولة ${attempts + 1}/${maxAttempts} | v3APIToken: ${credentials.token ? '✅' : '❌'} | appCheckToken: ${credentials.appCheckToken ? '✅' : '❌'}`);
 
-        if (credentials.token) {
-            console.log('✅ تم إيجاد v3APIToken');
-            await sleep(8000);
-            const refreshed = await readWolfTokens(page);
-            if (refreshed.appCheckToken) credentials.appCheckToken = refreshed.appCheckToken;
+        if (credentials.token && credentials.appCheckToken) {
+            console.log('🎉 تم إيجاد جميع التوكنات بنجاح!');
             break;
         }
+
+        if (credentials.token && !credentials.appCheckToken) {
+            console.log('⏳ تم إيجاد v3APIToken، في انتظار توليد appCheckToken...');
+        }
+
         await sleep(1000);
+        attempts++;
     }
 
     if (!credentials.token) {
         throw new Error('❌ لم يتم العثور على v3APIToken');
+    }
+
+    if (!credentials.appCheckToken) {
+        console.log('⚠️ تحذير: لم يتم العثور على appCheckToken حتى بعد الانتظار. قد يفشل الاتصال.');
     }
 
     console.log('');
@@ -286,8 +340,6 @@ export async function loadSession() {
     if (credentials.appCheckToken) {
         console.log('🛡️ appCheckToken:', maskToken(credentials.appCheckToken));
         console.log('🛡️ AppCheck length:', credentials.appCheckToken.length);
-    } else {
-        console.log('⚠️ لا يوجد appCheckToken');
     }
     console.log('📱 Device: web');
     console.log('========================================');
@@ -317,5 +369,4 @@ export async function closeSessionBrowser() {
     } catch (error) {
         console.error('⚠️ خطأ أثناء الإغلاق:', error?.message || error);
     }
-    // ⚠️ لا تحذف USER_DATA_DIR — يُحفظ في GitHub Cache
 }
