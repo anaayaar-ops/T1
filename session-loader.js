@@ -8,6 +8,7 @@ import { chromium } from 'playwright';
 // ============================================================
 
 const PROFILE_URL = process.env.WOLF_PROFILE_URL;
+const FORCE_FRESH_DOWNLOAD = process.env.FORCE_FRESH_DOWNLOAD === 'true';
 
 const PROFILE_CACHE_DIR = process.env.PROFILE_CACHE_DIR
     ? path.resolve(process.env.PROFILE_CACHE_DIR)
@@ -19,7 +20,7 @@ let browserContext = null;
 let wolfPage = null;
 
 // ============================================================
-// أدوات
+// أدوات مساعدة
 // ============================================================
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -91,7 +92,6 @@ async function downloadGoogleDriveFile(fileId) {
 
 async function downloadFile(url) {
     if (!url) throw new Error('❌ WOLF_PROFILE_URL غير موجود');
-
     const gid = extractGoogleDriveFileId(url);
     if (gid) return await downloadGoogleDriveFile(gid);
 
@@ -106,29 +106,23 @@ async function downloadFile(url) {
 function validateZipFile(buffer) {
     if (!buffer || buffer.length < 4) throw new Error('❌ ملف فارغ');
     const sig = buffer.subarray(0, 4).toString('hex').toLowerCase();
-    console.log('🔎 ZIP Signature:', sig);
     if (sig !== '504b0304' && sig !== '504b0506' && sig !== '504b0708') {
         throw new Error(`❌ ليس ZIP صالحًا (${sig})`);
     }
 }
 
 // ============================================================
-// كشف بروفايل صالح
+// استخراج البروفايل
 // ============================================================
 
 function findUserDataRoot(dir) {
     if (!fs.existsSync(dir)) return null;
-
-    if (fs.existsSync(path.join(dir, 'Default')) || fs.existsSync(path.join(dir, 'Local State'))) {
-        return dir;
-    }
+    if (fs.existsSync(path.join(dir, 'Default')) || fs.existsSync(path.join(dir, 'Local State'))) return dir;
 
     const knownNames = ['profile', 'Profile', 'chrome-profile', 'Chrome User Data', 'user-data', 'User Data'];
     for (const name of knownNames) {
         const sub = path.join(dir, name);
-        if (fs.existsSync(path.join(sub, 'Default')) || fs.existsSync(path.join(sub, 'Local State'))) {
-            return sub;
-        }
+        if (fs.existsSync(path.join(sub, 'Default')) || fs.existsSync(path.join(sub, 'Local State'))) return sub;
     }
 
     let items = [];
@@ -137,9 +131,7 @@ function findUserDataRoot(dir) {
     for (const name of items) {
         const sub = path.join(dir, name);
         try { if (!fs.statSync(sub).isDirectory()) continue; } catch { continue; }
-        if (fs.existsSync(path.join(sub, 'Default')) || fs.existsSync(path.join(sub, 'Local State'))) {
-            return sub;
-        }
+        if (fs.existsSync(path.join(sub, 'Default')) || fs.existsSync(path.join(sub, 'Local State'))) return sub;
     }
     return null;
 }
@@ -149,25 +141,22 @@ function extractProfile(buffer) {
     console.log('📦 فك إلى:', USER_DATA_DIR);
 
     const zip = new AdmZip(buffer);
-    console.log('📁 عدد الملفات:', zip.getEntries().length);
     zip.extractAllTo(USER_DATA_DIR, true);
 
     const root = findUserDataRoot(USER_DATA_DIR);
     if (!root) throw new Error('❌ لا يوجد بروفايل صالح بعد الفك');
-
     console.log('📂 User Data Root:', root);
     return root;
 }
 
 // ============================================================
-// قراءة التوكنات (البحث الشامل في LocalStorage و IndexedDB)
+// قراءة التوكنات (LocalStorage + IndexedDB)
 // ============================================================
 
 async function readWolfTokens(page) {
     return await page.evaluate(async () => {
         const result = { token: null, appCheckToken: null };
 
-        // 1. البحث في LocalStorage و SessionStorage
         const scanStorage = (storage) => {
             try {
                 for (let i = 0; i < storage.length; i++) {
@@ -186,7 +175,6 @@ async function readWolfTokens(page) {
 
         if (result.appCheckToken && result.token) return result;
 
-        // 2. البحث في IndexedDB (المكان الذي يختبئ فيه Firebase عادةً)
         try {
             const databases = await indexedDB.databases();
             for (const dbInfo of databases) {
@@ -211,21 +199,14 @@ async function readWolfTokens(page) {
                         if (record && record.value && record.value.key) {
                             const k = record.value.key.toLowerCase();
                             const v = record.value.value;
-                            if (!result.token && (k.includes('v3apitoken') || k.includes('v3_api_token'))) {
-                                result.token = v;
-                            }
-                            if (!result.appCheckToken && (k.includes('appchecktoken') || k.includes('app_check_token'))) {
-                                result.appCheckToken = v;
-                            }
+                            if (!result.token && (k.includes('v3apitoken') || k.includes('v3_api_token'))) result.token = v;
+                            if (!result.appCheckToken && (k.includes('appchecktoken') || k.includes('app_check_token'))) result.appCheckToken = v;
                         }
                     }
                 }
                 db.close();
             }
-        } catch (e) {
-            // تجاهل أخطاء IndexedDB
-        }
-
+        } catch (e) {}
         return result;
     });
 }
@@ -238,7 +219,7 @@ async function launchWolfBrowser(userDataDir) {
     console.log('🚀 تشغيل Chromium...');
 
     browserContext = await chromium.launchPersistentContext(userDataDir, {
-        headless: false,
+        headless: false, // ✅ مرئي لضمان توليد appCheckToken
         viewport: { width: 1440, height: 900 },
         userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
         locale: 'ar-SA',
@@ -263,12 +244,11 @@ async function launchWolfBrowser(userDataDir) {
         timeout: 120000
     });
     console.log('🌐 URL:', wolfPage.url());
-
     return wolfPage;
 }
 
 // ============================================================
-// loadSession
+// تحميل الجلسة
 // ============================================================
 
 export async function loadSession() {
@@ -279,32 +259,41 @@ export async function loadSession() {
     console.log('📂 Cache Dir:', PROFILE_CACHE_DIR);
     console.log('📂 User Data:', USER_DATA_DIR);
 
-    const existingRoot = findUserDataRoot(USER_DATA_DIR);
     let userDataDir;
 
-    if (existingRoot) {
-        userDataDir = existingRoot;
-        console.log('✅ استخدام البروفايل من Cache');
-        try {
-            const stat = fs.statSync(existingRoot);
-            console.log('🕐 آخر تعديل:', stat.mtime.toISOString());
-        } catch {}
-    } else {
-        if (!PROFILE_URL) throw new Error('❌ لا Cache ولا WOLF_PROFILE_URL');
-        console.log('📥 لا Cache — تنزيل من Drive...');
+    if (FORCE_FRESH_DOWNLOAD) {
+        console.log('🔄 تفعيل التحميل المباشر (تجاهل الكاش)...');
+        if (fs.existsSync(USER_DATA_DIR)) {
+            fs.rmSync(USER_DATA_DIR, { recursive: true, force: true });
+            console.log('🗑️ تم حذف البروفايل القديم.');
+        }
+        if (!PROFILE_URL) throw new Error('❌ WOLF_PROFILE_URL غير موجود');
+        console.log('📥 تنزيل من Google Drive...');
         const zipBuffer = await downloadFile(PROFILE_URL);
         validateZipFile(zipBuffer);
         userDataDir = extractProfile(zipBuffer);
+    } else {
+        const existingRoot = findUserDataRoot(USER_DATA_DIR);
+        if (existingRoot) {
+            userDataDir = existingRoot;
+            console.log('✅ استخدام البروفايل من Cache');
+        } else {
+            if (!PROFILE_URL) throw new Error('❌ لا Cache ولا WOLF_PROFILE_URL');
+            console.log('📥 لا Cache — تنزيل من Drive...');
+            const zipBuffer = await downloadFile(PROFILE_URL);
+            validateZipFile(zipBuffer);
+            userDataDir = extractProfile(zipBuffer);
+        }
     }
 
     const page = await launchWolfBrowser(userDataDir);
 
-    console.log('⏳ انتظار جلسة WOLF وتوليد appCheckToken (قد يستغرق دقيقة)...');
+    console.log('⏳ انتظار جلسة WOLF وتوليد appCheckToken...');
     await sleep(5000);
 
     let credentials = { token: null, appCheckToken: null };
     let attempts = 0;
-    const maxAttempts = 90; // 90 ثانية كحد أقصى
+    const maxAttempts = 90; 
 
     while (attempts < maxAttempts) {
         credentials = await readWolfTokens(page);
@@ -314,34 +303,22 @@ export async function loadSession() {
             console.log('🎉 تم إيجاد جميع التوكنات بنجاح!');
             break;
         }
-
-        if (credentials.token && !credentials.appCheckToken) {
-            console.log('⏳ تم إيجاد v3APIToken، في انتظار توليد appCheckToken...');
-        }
-
         await sleep(1000);
         attempts++;
     }
 
-    if (!credentials.token) {
-        throw new Error('❌ لم يتم العثور على v3APIToken');
-    }
-
-    if (!credentials.appCheckToken) {
-        console.log('⚠️ تحذير: لم يتم العثور على appCheckToken حتى بعد الانتظار. قد يفشل الاتصال.');
-    }
+    if (!credentials.token) throw new Error('❌ لم يتم العثور على v3APIToken');
 
     console.log('');
     console.log('========================================');
     console.log('🔐 WOLF Credentials');
     console.log('========================================');
     console.log('🔐 v3APIToken:', maskToken(credentials.token));
-    console.log('🔐 Token length:', credentials.token.length);
     if (credentials.appCheckToken) {
         console.log('🛡️ appCheckToken:', maskToken(credentials.appCheckToken));
-        console.log('🛡️ AppCheck length:', credentials.appCheckToken.length);
+    } else {
+        console.log('⚠️ تحذير: لم يتم العثور على appCheckToken');
     }
-    console.log('📱 Device: web');
     console.log('========================================');
 
     return {
@@ -353,18 +330,13 @@ export async function loadSession() {
     };
 }
 
-// ============================================================
-// إغلاق المتصفح (مع الحفاظ على البروفايل)
-// ============================================================
-
 export async function closeSessionBrowser() {
     try {
         if (browserContext) {
-            console.log('🔒 إغلاق المتصفح — لحفظ التوكنات المُحدَّثة...');
+            console.log('🔒 إغلاق المتصفح...');
             await browserContext.close();
             browserContext = null;
             wolfPage = null;
-            console.log('✅ تم الإغلاق — البروفايل جاهز للحفظ في Cache');
         }
     } catch (error) {
         console.error('⚠️ خطأ أثناء الإغلاق:', error?.message || error);
