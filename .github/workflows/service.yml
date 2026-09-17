@@ -1,20 +1,18 @@
-name: WOLF Event Bot
+name: WOLF Bot
 
 on:
-  schedule:
-    - cron: '0 */4 * * *'   # كل 4 ساعات
   workflow_dispatch:
+  schedule:
+    - cron: "0 */4 * * *"   # كل 4 ساعات
 
 concurrency:
-  group: wolf-event-bot
-  cancel-in-progress: true   # يقتل النسخة السابقة عند بدء نسخة جديدة
+  group: wolf-bot
+  cancel-in-progress: true
 
 jobs:
   wolf:
     runs-on: ubuntu-latest
-
-    # 5 ساعات كحد أقصى (الحد المجاني 6 ساعات)
-    timeout-minutes: 300
+    timeout-minutes: 330
 
     steps:
       # ======================================================
@@ -24,7 +22,7 @@ jobs:
         uses: actions/checkout@v4
 
       # ======================================================
-      # Node.js
+      # Setup Node.js
       # ======================================================
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -33,11 +31,21 @@ jobs:
           cache: "npm"
 
       # ======================================================
-      # Install Dependencies
+      # Install System Dependencies (Xvfb & Playwright deps)
       # ======================================================
-      - name: Install dependencies
+      - name: Install System Dependencies
         run: |
-          echo "📦 Installing dependencies..."
+          echo "📦 Installing Xvfb and system dependencies..."
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          echo "✅ Xvfb installed successfully"
+
+      # ======================================================
+      # Install Project Dependencies
+      # ======================================================
+      - name: Install Project Dependencies
+        run: |
+          echo "📦 Installing npm dependencies..."
           npm install
           echo "🌐 Installing Playwright Chromium..."
           npx playwright install --with-deps chromium
@@ -65,7 +73,7 @@ jobs:
           fi
 
       # ======================================================
-      # Check Profile URL
+      # Check WOLF Profile Secret
       # ======================================================
       - name: Check WOLF Profile Secret
         env:
@@ -78,19 +86,26 @@ jobs:
           echo "✅ WOLF_PROFILE_URL is available"
 
       # ======================================================
-      # Run Bot
+      # Run Bot (using Xvfb)
       # ======================================================
       - name: Run WOLF Event Task
         env:
           WOLF_PROFILE_URL: ${{ secrets.WOLF_PROFILE_URL }}
           PROFILE_CACHE_DIR: ${{ github.workspace }}/profile-cache
         run: |
-          echo "🕐 Start: $(date)"
-          echo "🎯 DEVICE: web"
+          echo "========================================"
+          echo "🐺 WOLF BOT STARTING"
+          echo "🕐 Start time: $(date)"
+          echo "📱 DEVICE: web"
           echo "🛡️ APP CHECK: true"
-          npm start
+          echo "========================================"
+          
+          # ✅ تشغيل البوت داخل شاشة وهمية (Xvfb) لتجنب كشف الأتمتة
+          xvfb-run --auto-servernum --server-args="-screen 0 1366x768x24" npm start
+          
           EXIT_CODE=$?
-          echo "🕐 End: $(date)"
+          echo "🕐 End time: $(date)"
+          echo "========================================"
           exit $EXIT_CODE
 
       # ======================================================
@@ -104,12 +119,22 @@ jobs:
           key: wolf-profile-${{ github.run_id }}
 
       # ======================================================
-      # Cleanup
+      # Final Cleanup
       # ======================================================
       - name: Final Cleanup
         if: always()
         run: |
+          echo "🧹 FINAL CLEANUP"
+          echo "🛑 Cleaning current WOLF process..."
+          
           pkill -TERM -f "node check-wolf.js" 2>/dev/null || true
           sleep 2
           pkill -KILL -f "node check-wolf.js" 2>/dev/null || true
-          echo "✅ Cleanup done"
+          
+          # تنظيف عمليات Xvfb المتبقية
+          pkill -TERM -f "Xvfb" 2>/dev/null || true
+          sleep 2
+          pkill -KILL -f "Xvfb" 2>/dev/null || true
+          
+          echo "✅ Final cleanup completed"
+          echo "========================================"
