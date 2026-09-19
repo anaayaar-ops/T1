@@ -41,7 +41,7 @@ jobs:
         env:
           GH_READ_TOKEN: ${{ secrets.GH_READ_TOKEN }}
           GH_OWNER: "anaayaar-ops"
-          GH_REPO: "too"
+          GH_REPO: "ono"
           GH_FILE: "tokens.json"
           GH_BRANCH: "main"
         run: |
