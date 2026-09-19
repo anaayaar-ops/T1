@@ -1,14 +1,14 @@
 // session-loader.js
-// يقرأ الرموز من مستودع anaayaar-ops/too
+// يقرأ الرموز من مستودع anaayaar-ops/ono
 
 // ============================================================
-// الإعدادات
+// الإعدادات (ثابتة — لا يعتمد على environment variables)
 // ============================================================
 const GITHUB_TOKEN = process.env.GH_READ_TOKEN || '';
-const GITHUB_OWNER = process.env.GH_OWNER || 'anaayaar-ops';
-const GITHUB_REPO = process.env.GH_REPO || 'ono';
-const GITHUB_FILE = process.env.GH_FILE || 'tokens.json';
-const GITHUB_BRANCH = process.env.GH_BRANCH || 'main';
+const GITHUB_OWNER = 'anaayaar-ops';
+const GITHUB_REPO = 'ono';
+const GITHUB_FILE = 'tokens.json';
+const GITHUB_BRANCH = 'main';
 
 // ============================================================
 // أدوات
@@ -40,7 +40,13 @@ async function fetchTokensFromGitHub() {
     });
 
     if (res.status === 404) {
-        throw new Error('❌ الملف tokens.json غير موجود في المستودع');
+        throw new Error(`❌ الملف tokens.json غير موجود في المستودع ${GITHUB_REPO}`);
+    }
+    if (res.status === 401) {
+        throw new Error('❌ GH_READ_TOKEN غير صالح أو منتهي');
+    }
+    if (res.status === 403) {
+        throw new Error('❌ الصلاحيات غير كافية — تأكد من Contents: Read على ono');
     }
     if (!res.ok) {
         throw new Error(`❌ فشل قراءة الملف: ${res.status} — ${await res.text()}`);
