@@ -6,7 +6,7 @@
 // ============================================================
 const GITHUB_TOKEN = process.env.GH_READ_TOKEN || '';
 const GITHUB_OWNER = process.env.GH_OWNER || 'anaayaar-ops';
-const GITHUB_REPO = process.env.GH_REPO || 'too';
+const GITHUB_REPO = process.env.GH_REPO || 'ono';
 const GITHUB_FILE = process.env.GH_FILE || 'tokens.json';
 const GITHUB_BRANCH = process.env.GH_BRANCH || 'main';
 
