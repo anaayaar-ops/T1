@@ -24,57 +24,39 @@ jobs:
           node-version: "20"
           cache: "npm"
 
-      - name: Install System Dependencies (Xvfb)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb
+      - name: Install Dependencies
+        run: npm install
 
-      - name: Install Project Dependencies
-        run: |
-          npm install
-          npx playwright install --with-deps chromium
-
-      - name: Check WOLF Profile Secret
+      - name: Verify GH_READ_TOKEN
         env:
-          WOLF_PROFILE_URL: ${{ secrets.WOLF_PROFILE_URL }}
+          GH_READ_TOKEN: ${{ secrets.GH_READ_TOKEN }}
         run: |
-          if [ -z "$WOLF_PROFILE_URL" ]; then
-            echo "❌ WOLF_PROFILE_URL is NOT available"
+          if [ -z "$GH_READ_TOKEN" ]; then
+            echo "❌ GH_READ_TOKEN غير موجود في Secrets"
             exit 1
           fi
-          echo "✅ WOLF_PROFILE_URL is available"
+          echo "✅ GH_READ_TOKEN متوفر"
 
-      # ======================================================
-      # Run Bot (Forced Direct Download)
-      # ======================================================
-      - name: Run WOLF Event Task
+      - name: Run WOLF Bot
         env:
-          WOLF_PROFILE_URL: ${{ secrets.WOLF_PROFILE_URL }}
-          PROFILE_CACHE_DIR: ${{ github.workspace }}/profile-cache
-          FORCE_FRESH_DOWNLOAD: "true"
+          GH_READ_TOKEN: ${{ secrets.GH_READ_TOKEN }}
+          GH_OWNER: "anaayaar-ops"
+          GH_REPO: "too"
+          GH_FILE: "tokens.json"
+          GH_BRANCH: "main"
         run: |
           echo "========================================"
-          echo "🐺 WOLF BOT STARTING (FORCE DIRECT DOWNLOAD)"
-          echo "🕐 Start time: $(date)"
+          echo "🐺 WOLF BOT STARTING"
+          echo "🕐 Start: $(date)"
           echo "========================================"
-          
-          xvfb-run --auto-servernum --server-args="-screen 0 1366x768x24" npm start
-          
-          EXIT_CODE=$?
-          echo "🕐 End time: $(date)"
-          exit $EXIT_CODE
+          npm start
+          echo "🕐 End: $(date)"
 
-      # ======================================================
-      # Final Cleanup
-      # ======================================================
-      - name: Final Cleanup
+      - name: Cleanup
         if: always()
         run: |
-          echo "🧹 FINAL CLEANUP"
+          echo "🧹 Cleanup"
           pkill -TERM -f "node check-wolf.js" 2>/dev/null || true
           sleep 2
           pkill -KILL -f "node check-wolf.js" 2>/dev/null || true
-          pkill -TERM -f "Xvfb" 2>/dev/null || true
-          sleep 2
-          pkill -KILL -f "Xvfb" 2>/dev/null || true
-          echo "✅ Cleanup done"
+          echo "✅ Done"
