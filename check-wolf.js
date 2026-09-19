@@ -1,12 +1,11 @@
-// ============================================================
-// WOLF Bot — check-wolf.js
-// ============================================================
+// check-wolf.js
+// WOLF Bot — يقرأ الرموز من GitHub
 
-process.on('uncaughtException', err => {
+process.on('uncaughtException', (err) => {
     console.error('💥 UNCAUGHT EXCEPTION:', err?.stack || err);
     process.exitCode = 1;
 });
-process.on('unhandledRejection', err => {
+process.on('unhandledRejection', (err) => {
     console.error('💥 UNHANDLED REJECTION:', err?.stack || err);
     process.exitCode = 1;
 });
@@ -16,18 +15,31 @@ console.log('🚀 check-wolf.js starting...');
 // ============================================================
 // الإعدادات
 // ============================================================
-
 const settings = {
     channelId: 224,
-    attack: { message: "!ملوك هجوم", repeat: 3, gapMs: 1000, waitMs: 5 * 60 * 1000 + 1000 },
-    training: { message: "!ملوك تدريب", repeat: 1, gapMs: 0, waitMs: 2 * 60 * 1000 + 1000 },
-    mercenary: { message: "!ملوك مرتزقة 🪶", repeat: 3, gapMs: 1000, waitMs: 10 * 60 * 1000 + 1000 }
+    attack: {
+        message: '!ملوك هجوم',
+        repeat: 3,
+        gapMs: 1000,
+        waitMs: 5 * 60 * 1000 + 1000
+    },
+    training: {
+        message: '!ملوك تدريب',
+        repeat: 1,
+        gapMs: 0,
+        waitMs: 2 * 60 * 1000 + 1000
+    },
+    mercenary: {
+        message: '!ملوك مرتزقة 🪶',
+        repeat: 3,
+        gapMs: 1000,
+        waitMs: 10 * 60 * 1000 + 1000
+    }
 };
 
 // ============================================================
 // متغيرات عامة
 // ============================================================
-
 let wolfjs = null;
 let io = null;
 let loadSession = null;
@@ -40,12 +52,11 @@ let browserClosed = false;
 let running = true;
 let shuttingDown = false;
 
-const sleep = ms => new Promise(r => setTimeout(r, ms));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ============================================================
 // إغلاق سلس
 // ============================================================
-
 async function shutdown(code = 0) {
     if (shuttingDown) return;
     shuttingDown = true;
@@ -72,7 +83,6 @@ process.on('SIGHUP', () => shutdown(0));
 // ============================================================
 // انتظار Authorization
 // ============================================================
-
 async function waitForSubscriber(timeoutMs = 60000) {
     const started = Date.now();
     console.log('⏳ انتظار Authorization...');
@@ -80,7 +90,13 @@ async function waitForSubscriber(timeoutMs = 60000) {
     while (Date.now() - started < timeoutMs) {
         if (service?.currentSubscriber?.id) {
             console.log('✅ Authorization complete');
-            console.log(`👤 الحساب: ${service.currentSubscriber.username || service.currentSubscriber.nickname || 'غير معروف'}`);
+            console.log(
+                `👤 الحساب: ${
+                    service.currentSubscriber.username ||
+                    service.currentSubscriber.nickname ||
+                    'غير معروف'
+                }`
+            );
             return true;
         }
         await sleep(500);
@@ -91,7 +107,6 @@ async function waitForSubscriber(timeoutMs = 60000) {
 // ============================================================
 // تهيئة المعالجات
 // ============================================================
-
 async function initializeHandlers() {
     console.log('⚙️ تهيئة WOLF handlers...');
     await service.websocket.init();
@@ -100,27 +115,28 @@ async function initializeHandlers() {
 }
 
 // ============================================================
-// الاتصال باستخدام Chrome Profile
+// الاتصال
 // ============================================================
-
-async function connectUsingChromeProfile(credentials) {
+async function connectUsingGitHubTokens(credentials) {
     const token = credentials?.token;
     const appCheckToken = credentials?.appCheckToken || '';
+    const deviceToken = credentials?.deviceToken || '';
     const device = credentials?.device || 'web';
 
-    // ✅ منع الاتصال إذا لم يوجد appCheckToken
     if (!appCheckToken) {
-        throw new Error('❌ لا يمكن الاتصال بـ WOLF بدون appCheckToken. Firebase رفض توليده، غالباً بسبب حظر IP السيرفر.');
+        throw new Error('❌ appCheckToken مفقود');
     }
-
-    if (!token) throw new Error('لم يتم العثور على v3APIToken.');
+    if (!token) {
+        throw new Error('❌ v3APIToken مفقود');
+    }
 
     console.log('🔐 Token length:', token.length);
     console.log('🛡️ AppCheck length:', appCheckToken.length);
+    if (deviceToken) console.log('📱 DeviceToken length:', deviceToken.length);
 
     service = new wolfjs.WOLF();
     service.config.framework.login.token = token;
-    service.config.framework.login.onlineState = OnlineState.BUSY;
+    service.config.framework.login.onlineState = OnlineState.INVISIBLE;
     service.config.framework.login.appCheckToken = appCheckToken;
 
     await initializeHandlers();
@@ -131,24 +147,29 @@ async function connectUsingChromeProfile(credentials) {
 
     console.log(`🌐 Host: ${host}:${port}`);
 
+    const query = {
+        token,
+        device: device,
+        state: service.config.framework.login.onlineState,
+        isAppCheckEnabled: 'true',
+        appCheckToken: appCheckToken
+    };
+    if (deviceToken) query.deviceToken = deviceToken;
+
     socket = io(`${host}:${port}`, {
         transports: ['websocket'],
         reconnection: true,
         autoConnect: false,
-        query: {
-            token,
-            device: device,
-            state: service.config.framework.login.onlineState,
-            isAppCheckEnabled: 'true',
-            appCheckToken: appCheckToken
-        }
+        query
     });
 
     service.websocket.socket = socket;
 
     socket.on('connect', () => console.log(`🔗 Connected — socket.id=${socket.id}`));
-    socket.on('connect_error', error => console.error('❌ Connection error:', error?.message || error));
-    socket.on('disconnect', reason => console.log(`🔌 Disconnected: ${reason}`));
+    socket.on('connect_error', (error) =>
+        console.error('❌ Connection error:', error?.message || error)
+    );
+    socket.on('disconnect', (reason) => console.log(`🔌 Disconnected: ${reason}`));
 
     socket.onAny(async (eventName, data) => {
         try {
@@ -172,7 +193,6 @@ async function connectUsingChromeProfile(credentials) {
 // ============================================================
 // إرسال رسالة
 // ============================================================
-
 async function sendToChannel(text) {
     try {
         await service.messaging.sendGroupMessage(settings.channelId, text);
@@ -185,7 +205,6 @@ async function sendToChannel(text) {
 // ============================================================
 // حلقة المهام
 // ============================================================
-
 async function taskLoop(name, config) {
     while (running) {
         try {
@@ -215,15 +234,16 @@ function startHeartbeat() {
     setInterval(() => {
         if (!running) return;
         const connected = socket?.connected;
-        console.log(`💓 Heartbeat | socket=${connected ? 'ON' : 'OFF'} | queue/status`);
-        if (!connected && socket) { try { socket.connect(); } catch {} }
+        console.log(`💓 Heartbeat | socket=${connected ? 'ON' : 'OFF'}`);
+        if (!connected && socket) {
+            try { socket.connect(); } catch {}
+        }
     }, 60000).unref();
 }
 
 // ============================================================
 // main
 // ============================================================
-
 async function main() {
     console.log('🐺 WOLF Bot — Multi-Task');
     console.log('📥 تحميل الحزم...');
@@ -240,18 +260,19 @@ async function main() {
     closeSessionBrowser = loaderMod.closeSessionBrowser;
     console.log('✅ الحزم محمّلة');
 
-    console.log('🌐 قراءة جلسة WOLF...');
+    console.log('🌐 قراءة الرموز من GitHub...');
     const credentials = await loadSession();
-    if (!credentials?.token) throw new Error('لم يتم العثور على v3APIToken.');
+    if (!credentials?.token) throw new Error('❌ v3APIToken مفقود');
 
-    await connectUsingChromeProfile(credentials);
-    await service.setOnlineState(OnlineState.BUSY);
+    await connectUsingGitHubTokens(credentials);
+    await service.setOnlineState(OnlineState.INVISIBLE);
 
     startTasks();
     startHeartbeat();
 
     console.log('\n🟢 البوت يعمل الآن');
 
+    // إيقاف تلقائي بعد 4 ساعات و55 دقيقة
     const AUTO_SHUTDOWN_MS = (4 * 60 + 55) * 60 * 1000;
     setTimeout(() => {
         console.log('⏰ انتهت مدة التشغيل التلقائي — إغلاق سلس');
@@ -259,7 +280,7 @@ async function main() {
     }, AUTO_SHUTDOWN_MS);
 }
 
-main().catch(async err => {
+main().catch(async (err) => {
     console.error('\n❌ FATAL ERROR');
     console.error(err?.stack || err?.message || err);
     await shutdown(1);
