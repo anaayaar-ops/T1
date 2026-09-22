@@ -2,17 +2,15 @@ name: WOLF Bot
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 */4 * * *"
 
 concurrency:
   group: wolf-bot
-  cancel-in-progress: true
+  cancel-in-progress: true   # يقتل أي نسخة قديمة عند بدء جديدة
 
 jobs:
   wolf:
     runs-on: ubuntu-latest
-    timeout-minutes: 330
+    timeout-minutes: 360
 
     steps:
       - name: Checkout repository
@@ -56,7 +54,7 @@ jobs:
         if: always()
         run: |
           echo "🧹 Cleanup"
-          pkill -TERM -f "node check-wolf.js" 2>/dev/null || true
+          pkill -TERM -f "node" 2>/dev/null || true
           sleep 2
-          pkill -KILL -f "node check-wolf.js" 2>/dev/null || true
+          pkill -KILL -f "node" 2>/dev/null || true
           echo "✅ Done"
