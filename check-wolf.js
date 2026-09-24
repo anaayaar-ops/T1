@@ -34,6 +34,12 @@ const settings = {
         repeat: 3,
         gapMs: 1000,
         waitMs: 10 * 60 * 1000 + 1000
+    },
+    armor: {
+        message: '!ملوك درع 6',
+        repeat: 1,
+        gapMs: 0,
+        waitMs: 3 * 60 * 1000 + 1000
     }
 };
 
@@ -228,6 +234,7 @@ function startTasks() {
     taskLoop('هجوم', settings.attack);
     taskLoop('تدريب', settings.training);
     taskLoop('مرتزقة', settings.mercenary);
+    taskLoop('درع', settings.armor);
 }
 
 function startHeartbeat() {
