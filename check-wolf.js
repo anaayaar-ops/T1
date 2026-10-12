@@ -44,6 +44,17 @@ const settings = {
 };
 
 // ============================================================
+// حلقة سور تطوير / قلعة تطوير
+// 10 × سور تطوير (كل 31 دقيقة) → قلعة تطوير → تكرار
+// ============================================================
+const WALL_CASTLE = {
+    wall:   '!ملوك سور تطوير',
+    castle: '!ملوك قلعة تطوير',
+    repeat: 10,
+    waitMs: 31 * 60 * 1000   // 31 دقيقة
+};
+
+// ============================================================
 // متغيرات عامة
 // ============================================================
 let wolfjs = null;
@@ -209,7 +220,7 @@ async function sendToChannel(text) {
 }
 
 // ============================================================
-// حلقة المهام
+// حلقة المهام العامة
 // ============================================================
 async function taskLoop(name, config) {
     while (running) {
@@ -229,12 +240,42 @@ async function taskLoop(name, config) {
     }
 }
 
+// ============================================================
+// حلقة سور تطوير / قلعة تطوير
+// 10 × سور تطوير (كل 31 دقيقة) → قلعة تطوير → تكرار
+// ============================================================
+async function wallCastleLoop() {
+    while (running) {
+        try {
+            console.log(`▶️ [سور تطوير] إرسال ${WALL_CASTLE.repeat} مرة (كل 31 دقيقة)`);
+            for (let i = 0; i < WALL_CASTLE.repeat; i++) {
+                if (!running) return;
+                await sendToChannel(WALL_CASTLE.wall);
+                console.log(`⏳ [سور تطوير] ${i + 1}/${WALL_CASTLE.repeat} — انتظار 31 دقيقة`);
+                await sleep(WALL_CASTLE.waitMs);
+            }
+
+            if (!running) return;
+            console.log('🏰 [قلعة تطوير] إرسال مرة واحدة');
+            await sendToChannel(WALL_CASTLE.castle);
+            console.log('⏳ [قلعة تطوير] انتظار 31 دقيقة');
+            await sleep(WALL_CASTLE.waitMs);
+
+            console.log('🔁 [سور/قلعة] إعادة الدورة من البداية');
+        } catch (err) {
+            console.error('❌ [سور/قلعة] خطأ:', err?.message || err);
+            await sleep(5000);
+        }
+    }
+}
+
 function startTasks() {
     console.log('\n⚙️ تشغيل المهام');
-    taskLoop('هجوم', settings.attack);
-    taskLoop('تدريب', settings.training);
+    taskLoop('هجوم',   settings.attack);
+    taskLoop('تدريب',  settings.training);
     taskLoop('مرتزقة', settings.mercenary);
-    taskLoop('درع', settings.armor);
+    taskLoop('درع',    settings.armor);
+    wallCastleLoop();   // ← جديد
 }
 
 function startHeartbeat() {
@@ -279,8 +320,8 @@ async function main() {
 
     console.log('\n🟢 البوت يعمل الآن');
 
-    // إيقاف تلقائي بعد 4 ساعات و55 دقيقة
-    const AUTO_SHUTDOWN_MS = (4 * 60 + 55) * 60 * 1000;
+    // إيقاف تلقائي بعد 5 ساعات و41 دقيقة
+    const AUTO_SHUTDOWN_MS = (5 * 60 + 41) * 60 * 1000;
     setTimeout(() => {
         console.log('⏰ انتهت مدة التشغيل التلقائي — إغلاق سلس');
         shutdown(0);
