@@ -39,7 +39,7 @@ const settings = {
         message: '!ملوك درع 6',
         repeat: 1,
         gapMs: 0,
-        waitMs: 3 * 60 * 1000 + 1000
+        waitMs: 1 * 60 * 1000 + 1000
     }
 };
 
